@@ -1,0 +1,24 @@
+@import "tailwindcss";
+@plugin 'flowbite/plugin';
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ... */
+
+@source "../../node_modules/flowbite-svelte/dist";
+@source "../../node_modules/flowbite-svelte-icons/dist";
+
+/* @custom-variant hover (&:hover); */
+
+/* наведение курсора не работет в Хроме, сука. Далнейшее можно убрать все если в телеге заработает. С чего бы ей заработать. Тут пробы, но не сработали */
+
+html,
+body {
+  @apply h-full;
+}
+
+
+@custom-variant hover {
+  &:hover {
+    @slot;
+  }
+}
