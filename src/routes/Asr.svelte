@@ -1,332 +1,373 @@
-<!-- ASRWorklet.svelte -->
+<!-- src/routes/Asr.svelte -->
 <script>
     import { onMount, onDestroy } from 'svelte';
-    import { SherpaASRClient } from '$lib/asr-client.js';
+    import { navigateTo, currentNoteId } from '$lib/store.js';
+    import { sessionStore } from '$lib/stores/sessionStore';
+    import { NotesStore } from '$lib/stores/notesStore';
+    import { icons } from '$lib/images/icons.js';
 
-    let asr = null;
-    let transcript = '';
-    let isRecording = false;
-    let isConnected = false;
-    let isSupported = true;
-    let errorMessage = '';
-    let transcriptHistory = [];
+    let notesStore;
+    let isConnecting = $state(false);
+    let error = $state(null);
+    let autoSaveTimer = $state(null);
+    let editDiv = $state(null);
+    let currentNote = $state(null);
+
+    // Флаги
+    let isUpdatingFromSession = $state(false);
+    let isUpdatingFromEditor = $state(false);
+    let isComponentMounted = $state(true);
+
+    // Подписка на sessionStore
+    let session = $state({});
+    const unsubscribeSession = sessionStore.subscribe(value => {
+        session = value;
+
+        // Обновляем редактор только если компонент смонтирован
+        if (isComponentMounted && !isUpdatingFromEditor && editDiv && editDiv.textContent !== value.currentText) {
+            isUpdatingFromSession = true;
+            editDiv.textContent = value.currentText;
+            // Не устанавливаем курсор при очистке
+            if (value.currentText !== '') {
+                placeCaretAtEnd(editDiv);
+            }
+            setTimeout(() => {
+                isUpdatingFromSession = false;
+            }, 0);
+        }
+    });
+
+    // Подписка на currentNoteId
+    let noteId = $state(null);
+    const unsubscribeNoteId = currentNoteId.subscribe(value => {
+        noteId = value;
+    });
 
     onMount(() => {
-        // Initialize ASR client
-        asr = new SherpaASRClient();
+        isComponentMounted = true;
+        initNotesStore();
+    });
 
-        // Check if AudioWorklet is supported
-        isSupported = asr.isSupported();
+    async function initNotesStore() {
+        notesStore = new NotesStore();
+        await notesStore.init();
 
-        if (!isSupported) {
-            errorMessage = 'AudioWorklet is not supported in this browser. Please use Chrome, Edge, or Firefox.';
+        if (noteId) {
+            try {
+                const note = await notesStore.getNote(noteId);
+                if (note) {
+                    currentNote = note;
+                    sessionStore.setText(note.content);
+                } else {
+                    console.warn('Заметка не найдена:', noteId);
+                    noteId = null;
+                    const draft = await notesStore.getDraft();
+                    if (draft && draft.content) {
+                        sessionStore.setText(draft.content);
+                    }
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки заметки:', error);
+                noteId = null;
+            }
+        } else {
+            const draft = await notesStore.getDraft();
+            if (draft && draft.content) {
+                sessionStore.setText(draft.content);
+            }
+        }
+
+        // Автосохранение черновика
+        autoSaveTimer = setInterval(async () => {
+            if (session.currentText.trim() && !noteId && isComponentMounted) {
+                await notesStore.saveDraft(session.currentText);
+            }
+        }, 5000);
+    }
+
+    onDestroy(() => {
+        isComponentMounted = false;
+
+        if (autoSaveTimer) {
+            clearInterval(autoSaveTimer);
+        }
+        unsubscribeSession();
+        unsubscribeNoteId();
+    });
+
+    function placeCaretAtEnd(element) {
+        // Проверяем, что элемент все еще в DOM
+        if (!element || !isComponentMounted || !document.body.contains(element) || isUpdatingFromEditor) {
             return;
         }
 
-        // Setup event listeners
-        asr.on('transcript', (data) => {
-            transcript = data.text;
+        requestAnimationFrame(() => {
+            try {
+                const range = document.createRange();
+                const selection = window.getSelection();
 
-            if (data.isFinal) {
-                transcriptHistory.push({
-                    text: data.text,
-                    timestamp: data.timestamp,
-                    isFinal: true
-                });
-
-                // Keep only last 20 transcripts
-                if (transcriptHistory.length > 20) {
-                    transcriptHistory.shift();
+                // Дополнительная проверка
+                if (!document.body.contains(element)) {
+                    return;
                 }
 
-                transcriptHistory = transcriptHistory; // Trigger reactivity
+                range.selectNodeContents(element);
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            } catch (e) {
+                // Игнорируем ошибки, если элемент больше не в DOM
+                console.debug('Не удалось установить курсор, элемент не в DOM');
             }
         });
+    }
 
-        asr.on('status', (status) => {
-            isRecording = status.recording;
-            isConnected = status.connected;
-        });
+    function handleEditorInput() {
+        if (!editDiv || isUpdatingFromSession || !isComponentMounted) return;
 
-        asr.on('error', (error) => {
-            errorMessage = error.message;
-            console.error('ASR error:', error);
-        });
-    });
+        isUpdatingFromEditor = true;
+        const text = editDiv.textContent || '';
 
-    onDestroy(() => {
-        if (asr) {
-            asr.stop();
+        if (text !== session.currentText) {
+            sessionStore.setText(text);
         }
-    });
+
+        setTimeout(() => {
+            isUpdatingFromEditor = false;
+        }, 0);
+    }
+
+    function handleEditorKeyDown(event) {
+        if (!isComponentMounted) return;
+    }
+
+    function handleEditorBlur() {
+        if (!isUpdatingFromSession && isComponentMounted) {
+            handleEditorInput();
+        }
+    }
+
+    async function toggleRecording() {
+        if (session.isRecording) {
+            stopRecording();
+        } else {
+            await startRecording();
+        }
+    }
 
     async function startRecording() {
-        errorMessage = '';
+        isConnecting = true;
+        error = null;
+
         try {
-            await asr.start();
-        } catch (error) {
-            errorMessage = `Failed to start: ${error.message}`;
+            sessionStore.startRecording();
+
+            // TODO: Заглушка
+            setTimeout(() => {
+                if (isComponentMounted) {
+                    isConnecting = false;
+                    simulateTranscript('Тестовая запись голосового помощника.');
+                }
+            }, 800);
+
+        } catch (err) {
+            if (isComponentMounted) {
+                console.error('Ошибка запуска записи:', err);
+                error = err.message;
+                isConnecting = false;
+                sessionStore.stopRecording();
+            }
         }
     }
 
     function stopRecording() {
-        if (asr) {
-            asr.stop();
+        sessionStore.stopRecording();
+    }
+
+    function simulateTranscript(text) {
+        if (!session.isRecording || !isComponentMounted) return;
+
+        sessionStore.addTranscript(text);
+
+        if (session.isRecording && isComponentMounted) {
+            setTimeout(() => {
+                simulateTranscript('Продолжение тестовой записи.');
+            }, 1500);
         }
     }
 
-    function clearTranscript() {
-        transcript = '';
-        transcriptHistory = [];
+    async function saveNote() {
+        const text = session.currentText.trim();
+        if (!text) {
+            alert('Нечего сохранить');
+            return;
+        }
+
+        try {
+            // Останавливаем автосохранение перед навигацией
+            if (autoSaveTimer) {
+                clearInterval(autoSaveTimer);
+                autoSaveTimer = null;
+            }
+
+            if (noteId) {
+                try {
+                    const existingNote = await notesStore.getNote(noteId);
+                    if (existingNote) {
+                        await notesStore.updateNote(noteId, { content: text });
+                    } else {
+                        await notesStore.addNote(text);
+                    }
+                } catch (error) {
+                    console.warn('Не удалось обновить заметку, создаем новую:', error);
+                    await notesStore.addNote(text);
+                }
+            } else {
+                await notesStore.addNote(text);
+                await notesStore.clearDraft();
+            }
+
+            // Не вызываем sessionStore.clear() - это вызывает обновление и ошибку курсора
+            // Вместо этого просто навигируем
+            navigateTo.list();
+
+        } catch (err) {
+            console.error('Ошибка сохранения:', err);
+            alert('Не удалось сохранить заметку');
+
+            // Возобновляем автосохранение при ошибке
+            if (isComponentMounted && !autoSaveTimer) {
+                autoSaveTimer = setInterval(async () => {
+                    if (session.currentText.trim() && !noteId) {
+                        await notesStore.saveDraft(session.currentText);
+                    }
+                }, 5000);
+            }
+        }
+    }
+
+    function handleCommand(command) {
+        switch(command) {
+            case 'абзац':
+                sessionStore.addParagraph();
+                break;
+            case 'стоп запись':
+                stopRecording();
+                break;
+            case 'сохранить':
+                saveNote();
+                break;
+            case 'удалить последнее слово':
+                sessionStore.undoLastWord();
+                break;
+        }
     }
 </script>
 
-<div class="asr-container">
-    <h2>🎤 Speech Recognition (AudioWorklet)</h2>
-
-    {#if !isSupported}
-        <div class="error">
-            ⚠️ {errorMessage || 'AudioWorklet not supported'}
-        </div>
-    {:else}
-        <!-- Status display -->
-        <div class="status">
-            <div class="status-item">
-                <span class="label">Connection:</span>
-                <span class="value {isConnected ? 'connected' : 'disconnected'}">
-                    {isConnected ? '✅ Connected' : '❌ Disconnected'}
-                </span>
-            </div>
-            <div class="status-item">
-                <span class="label">Recording:</span>
-                <span class="value {isRecording ? 'recording' : 'stopped'}">
-                    {isRecording ? '🔴 Recording' : '⏸️ Stopped'}
-                </span>
-            </div>
-        </div>
-
-        <!-- Controls -->
-        <div class="controls">
+<div class="min-h-screen bg-gray-50 pb-16">
+    <!-- Верхняя панель -->
+    <div class="bg-white border-b border-gray-200 px-4 py-3">
+        <div class="max-w-4xl mx-auto flex justify-between items-center">
             <button
-                on:click={startRecording}
-                disabled={isRecording}
-                class="start-btn"
+                on:click={() => {
+                    // Останавливаем автосохранение
+                    if (autoSaveTimer) {
+                        clearInterval(autoSaveTimer);
+                        autoSaveTimer = null;
+                    }
+                    navigateTo.list();
+                }}
+                class="p-2 text-gray-600 hover:text-gray-900"
+                title="Назад"
             >
-                Start Recording
+                {@html icons.back}
             </button>
-            <button
-                on:click={stopRecording}
-                disabled={!isRecording}
-                class="stop-btn"
-            >
-                Stop Recording
-            </button>
-            <button
-                on:click={clearTranscript}
-                class="clear-btn"
-            >
-                Clear
-            </button>
-        </div>
 
-        <!-- Error display -->
-        {#if errorMessage}
-            <div class="error">
-                ⚠️ {errorMessage}
-            </div>
-        {/if}
-
-        <!-- Live transcript -->
-        <div class="transcript-container">
-            <h3>Live Transcript:</h3>
-            <div class="live-transcript">
-                {transcript || 'Speak to see transcript here...'}
-            </div>
-        </div>
-
-        <!-- Transcript history -->
-        {#if transcriptHistory.length > 0}
-            <div class="history-container">
-                <h3>History:</h3>
-                <div class="history-list">
-                    {#each transcriptHistory as item (item.timestamp)}
-                        <div class="history-item">
-                            <span class="timestamp">
-                                {new Date(item.timestamp).toLocaleTimeString()}
-                            </span>
-                            <span class="text">{item.text}</span>
-                        </div>
-                    {/each}
+            <div class="flex items-center gap-2">
+                <div class="flex items-center gap-1.5">
+                    <div class={`w-2 h-2 rounded-full ${session.isRecording ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
+                    <span class="text-xs text-gray-500">
+                        {session.isRecording ? 'запись' : 'пауза'}
+                    </span>
                 </div>
             </div>
+
+            <button
+                on:click={saveNote}
+                disabled={!session.currentText.trim()}
+                class="p-2 text-green-600 hover:text-green-800 disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Сохранить"
+            >
+                {@html icons.save}
+            </button>
+        </div>
+    </div>
+
+    <!-- Основной контент -->
+    <div class="max-w-4xl mx-auto px-4 py-6">
+        <!-- Contenteditable область -->
+        <div class="bg-white border border-gray-300 rounded-lg p-4 min-h-[300px] mb-6">
+            <div
+                bind:this={editDiv}
+                contenteditable="true"
+                on:input={handleEditorInput}
+                on:keydown={handleEditorKeyDown}
+                on:blur={handleEditorBlur}
+                class="min-h-[280px] text-gray-800 text-base focus:outline-none whitespace-pre-wrap caret-blue-600"
+                placeholder="Текст будет появляться здесь по мере записи. Редактируйте текст вручную или используйте голосовые команды."
+            >
+                {session.currentText}
+            </div>
+        </div>
+
+        {#if error}
+            <div class="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg">
+                Ошибка: {error}
+            </div>
         {/if}
-    {/if}
+    </div>
+
+    <!-- Нижняя панель -->
+    <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-4">
+        <div class="max-w-4xl mx-auto">
+            <div class="flex flex-col items-center">
+                <button
+                    on:click={toggleRecording}
+                    disabled={isConnecting}
+                    class={`flex items-center justify-center w-14 h-14 rounded-full shadow-lg transition-all ${session.isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'} disabled:opacity-50`}
+                    title="{session.isRecording ? 'Остановить запись' : 'Начать запись'}"
+                >
+                    {#if isConnecting}
+                        {@html icons.loading}
+                    {:else if session.isRecording}
+                        {@html icons.stop}
+                    {:else}
+                        {@html icons.mic}
+                    {/if}
+                </button>
+
+                <div class="mt-3 text-xs text-gray-500 text-center">
+                    Голосовые команды:
+                    <span class="inline-flex items-center gap-1.5 mt-1">
+                        <span class="px-2 py-0.5 bg-gray-100 rounded">"абзац"</span>
+                        <span class="px-2 py-0.5 bg-gray-100 rounded">"стоп запись"</span>
+                        <span class="px-2 py-0.5 bg-gray-100 rounded">"сохранить"</span>
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <style>
-    .asr-container {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 24px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    [contenteditable="true"]:empty:before {
+        content: attr(placeholder);
+        color: #9ca3af;
+        pointer-events: none;
     }
 
-    h2 {
-        color: #333;
-        margin-bottom: 24px;
-        border-bottom: 2px solid #e0e0e0;
-        padding-bottom: 12px;
-    }
-
-    .status {
-        display: flex;
-        gap: 32px;
-        margin-bottom: 24px;
-        padding: 16px;
-        background: #f8f9fa;
-        border-radius: 8px;
-    }
-
-    .status-item {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-    }
-
-    .label {
-        font-size: 14px;
-        color: #666;
-    }
-
-    .value {
-        font-size: 16px;
-        font-weight: 600;
-    }
-
-    .value.connected {
-        color: #28a745;
-    }
-
-    .value.disconnected {
-        color: #dc3545;
-    }
-
-    .value.recording {
-        color: #dc3545;
-    }
-
-    .value.stopped {
-        color: #6c757d;
-    }
-
-    .controls {
-        display: flex;
-        gap: 12px;
-        margin-bottom: 24px;
-    }
-
-    button {
-        padding: 12px 24px;
-        border: none;
-        border-radius: 6px;
-        font-size: 16px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    }
-
-    button:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-    }
-
-    .start-btn {
-        background: #28a745;
-        color: white;
-    }
-
-    .start-btn:hover:not(:disabled) {
-        background: #218838;
-    }
-
-    .stop-btn {
-        background: #dc3545;
-        color: white;
-    }
-
-    .stop-btn:hover:not(:disabled) {
-        background: #c82333;
-    }
-
-    .clear-btn {
-        background: #6c757d;
-        color: white;
-    }
-
-    .clear-btn:hover {
-        background: #5a6268;
-    }
-
-    .error {
-        padding: 12px;
-        background: #f8d7da;
-        color: #721c24;
-        border-radius: 6px;
-        margin-bottom: 24px;
-        border: 1px solid #f5c6cb;
-    }
-
-    .transcript-container, .history-container {
-        margin-bottom: 24px;
-    }
-
-    h3 {
-        color: #495057;
-        margin-bottom: 12px;
-        font-size: 18px;
-    }
-
-    .live-transcript {
-        min-height: 80px;
-        padding: 16px;
-        background: white;
-        border: 2px solid #e0e0e0;
-        border-radius: 8px;
-        font-size: 18px;
-        line-height: 1.5;
-        color: #333;
-    }
-
-    .history-list {
-        max-height: 300px;
-        overflow-y: auto;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        padding: 0;
-    }
-
-    .history-item {
-        padding: 12px 16px;
-        border-bottom: 1px solid #f0f0f0;
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-    }
-
-    .history-item:last-child {
-        border-bottom: none;
-    }
-
-    .timestamp {
-        font-size: 12px;
-        color: #6c757d;
-        min-width: 60px;
-        padding-top: 2px;
-    }
-
-    .text {
-        flex: 1;
-        font-size: 16px;
-        line-height: 1.4;
+    [contenteditable="true"]:focus {
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
     }
 </style>
