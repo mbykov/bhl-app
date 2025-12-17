@@ -2,40 +2,15 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
     import { navigateTo, currentNoteId } from '$lib/store.js';
-    import { sessionStore } from '$lib/stores/sessionStore';
-    import { NotesStore } from '$lib/stores/notesStore';
-    import { icons } from '$lib/images/icons.js';
+    import { createPersistedArray } from '$lib/stores/persisted-store.svelte.js';
+    import { SherpaASRClient } from '$lib/asr-client.js';
+    import { MicrophoneOutline, CheckOutline } from "flowbite-svelte-icons";
 
-    let notesStore;
-    let isConnecting = $state(false);
-    let error = $state(null);
-    let autoSaveTimer = $state(null);
-    let editDiv = $state(null);
-    let currentNote = $state(null);
+    // Подключаемся к тому же хранилищу
+    let records = createPersistedArray('voice-notes', []);
 
-    // Флаги
-    let isUpdatingFromSession = $state(false);
-    let isUpdatingFromEditor = $state(false);
-    let isComponentMounted = $state(true);
-
-    // Подписка на sessionStore
-    let session = $state({});
-    const unsubscribeSession = sessionStore.subscribe(value => {
-        session = value;
-
-        // Обновляем редактор только если компонент смонтирован
-        if (isComponentMounted && !isUpdatingFromEditor && editDiv && editDiv.textContent !== value.currentText) {
-            isUpdatingFromSession = true;
-            editDiv.textContent = value.currentText;
-            // Не устанавливаем курсор при очистке
-            if (value.currentText !== '') {
-                placeCaretAtEnd(editDiv);
-            }
-            setTimeout(() => {
-                isUpdatingFromSession = false;
-            }, 0);
-        }
-    });
+    // ASR клиент
+    let asrClient = null;
 
     // Подписка на currentNoteId
     let noteId = $state(null);
@@ -43,319 +18,371 @@
         noteId = value;
     });
 
+    // Текущая заметка
+    let currentNote = $state(null);
+    let editDiv = $state(null);
+    let isRecording = $state(false);
+    let isConnecting = $state(false);
+    let error = $state(null);
+    let connectionStatus = $state('disconnected'); // disconnected, connecting, connected
+
+    let localUpdate = ''
+    // Инициализация ASR клиента
+    let segment = -1
     onMount(() => {
-        isComponentMounted = true;
-        initNotesStore();
-    });
+        asrClient = new SherpaASRClient();
 
-    async function initNotesStore() {
-        notesStore = new NotesStore();
-        await notesStore.init();
-
-        if (noteId) {
-            try {
-                const note = await notesStore.getNote(noteId);
-                if (note) {
-                    currentNote = note;
-                    sessionStore.setText(note.content);
+        // Подписываемся на события ASR
+        asrClient.on('transcript', (data) => {
+            if (currentNote && data.text && data.text.trim()) {
+                let transcript = data.text.trim();
+                // console.log('_transcript', data)
+                // Добавляем пробел перед новым текстом, если уже есть текст
+                // const separator = currentNote.content && !currentNote.content.endsWith(' ') ? ' ' : '';
+                const separator = !currentNote.content.endsWith(' ') ? ' ' : '';
+                // currentNote.content += separator + transcript;
+                // currentNote.content = separator + transcript;
+                transcript = separator + transcript
+                // =======
+                console.log('_segment__________________', segment, data.segment)
+                if (data.segment != segment) {
+                //     console.log('_segment__________________', data.segment, segment)
+                //     console.log('_transcript__________________', transcript)
+                //     console.log('_currentNote.content__________________', currentNote.content)
+                    segment = data.segment
+                    currentNote.content = editDiv.textContent
+                //     currentNote.content += ' seg_tr:' + transcript;
+                //     editDiv.textContent = currentNote.content;
+                //     console.log('_editDiv.textContent__________________', editDiv.textContent)
+                    // editDiv.textContent = currentNote.content + transcript;
                 } else {
-                    console.warn('Заметка не найдена:', noteId);
-                    noteId = null;
-                    const draft = await notesStore.getDraft();
-                    if (draft && draft.content) {
-                        sessionStore.setText(draft.content);
-                    }
+                //     console.log('_segment_', data.segment, segment)
+                //     console.log('_transcript_', transcript)
+                //     console.log('_currentNote.content_', currentNote.content)
+                //     editDiv.textContent = currentNote.content + ' tr:' + transcript;
+                //     console.log('_editDiv.textContent_', editDiv.textContent)
+                    editDiv.textContent = currentNote.content + transcript;
                 }
-            } catch (error) {
-                console.error('Ошибка загрузки заметки:', error);
-                noteId = null;
-            }
-        } else {
-            const draft = await notesStore.getDraft();
-            if (draft && draft.content) {
-                sessionStore.setText(draft.content);
-            }
-        }
+                // ======
+                currentNote.updatedAt = new Date();
+                currentNote.wordCount = currentNote.content.split(/\s+/).filter(w => w.length > 0).length;
 
-        // Автосохранение черновика
-        autoSaveTimer = setInterval(async () => {
-            if (session.currentText.trim() && !noteId && isComponentMounted) {
-                await notesStore.saveDraft(session.currentText);
-            }
-        }, 5000);
-    }
+                console.log(`📝 ${data.is_final ? '[FINAL]' : '[PARTIAL]'}: ${transcript}`);
 
-    onDestroy(() => {
-        isComponentMounted = false;
-
-        if (autoSaveTimer) {
-            clearInterval(autoSaveTimer);
-        }
-        unsubscribeSession();
-        unsubscribeNoteId();
-    });
-
-    function placeCaretAtEnd(element) {
-        // Проверяем, что элемент все еще в DOM
-        if (!element || !isComponentMounted || !document.body.contains(element) || isUpdatingFromEditor) {
-            return;
-        }
-
-        requestAnimationFrame(() => {
-            try {
-                const range = document.createRange();
-                const selection = window.getSelection();
-
-                // Дополнительная проверка
-                if (!document.body.contains(element)) {
-                    return;
+                // Если это финальный результат, добавляем пробел для следующей фразы
+                if (data.is_final) {
+                    currentNote.content += ' FINAL!!!!!!!!!!';
                 }
-
-                range.selectNodeContents(element);
-                range.collapse(false);
-                selection.removeAllRanges();
-                selection.addRange(range);
-            } catch (e) {
-                // Игнорируем ошибки, если элемент больше не в DOM
-                console.debug('Не удалось установить курсор, элемент не в DOM');
             }
         });
+
+        asrClient.on('status', (status) => {
+            console.log('ASR Status:', status);
+            connectionStatus = status.connected ? 'connected' : 'disconnected';
+        });
+
+        asrClient.on('error', (err) => {
+            console.error('ASR Error:', err);
+            error = err.message || 'Ошибка распознавания речи';
+            isRecording = false;
+            isConnecting = false;
+        });
+
+        // Находим или создаем заметку
+        if (noteId) {
+            // Ищем существующую заметку
+            const found = records.find(n => n.id === noteId);
+            if (found) {
+                currentNote = found;
+            } else {
+                // Если не нашли, сбрасываем
+                noteId = null;
+                currentNote = null;
+                createOrLoadDraft();
+            }
+        } else {
+            createOrLoadDraft();
+        }
+    });
+
+    // Синхронизируем редактор с текстом заметки
+    $effect(() => {
+        if (editDiv && currentNote && editDiv.textContent !== currentNote.content) {
+            // editDiv.textContent = currentNote.content;
+        }
+    });
+
+    function createOrLoadDraft() {
+        // Ищем черновик или создаем новую структуру
+        const draft = records.find(n => n.id === 'draft_current');
+        if (draft) {
+            currentNote = draft;
+        } else {
+            currentNote = {
+                id: 'draft_current',
+                title: 'Черновик',
+                content: '',
+                createdAt: new Date(),
+                updatedAt: new Date(),
+                wordCount: 0,
+                draft: true
+            };
+            records.push(currentNote);
+        }
     }
 
+    // Очистка при размонтировании
+    onDestroy(() => {
+        unsubscribeNoteId?.();
+        stopASR();
+    });
+
+    // Остановка ASR
+    async function stopASR() {
+        if (asrClient) {
+            try {
+                await asrClient.stop();
+            } catch (err) {
+                console.error('Ошибка остановки ASR:', err);
+            }
+        }
+        isRecording = false;
+        isConnecting = false;
+    }
+
+    // Обработчик ввода в редакторе
     function handleEditorInput() {
-        if (!editDiv || isUpdatingFromSession || !isComponentMounted) return;
-
-        isUpdatingFromEditor = true;
+        // return
+        if (!editDiv || !currentNote) return;
         const text = editDiv.textContent || '';
+        if (text !== currentNote.content) {
+            // currentNote.content = text;
+            currentNote.updatedAt = new Date();
+            currentNote.wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
 
-        if (text !== session.currentText) {
-            sessionStore.setText(text);
-        }
-
-        setTimeout(() => {
-            isUpdatingFromEditor = false;
-        }, 0);
-    }
-
-    function handleEditorKeyDown(event) {
-        if (!isComponentMounted) return;
-    }
-
-    function handleEditorBlur() {
-        if (!isUpdatingFromSession && isComponentMounted) {
-            handleEditorInput();
+            // Автогенерация заголовка для новых заметок
+            if (!currentNote.draft && !currentNote.title && text.trim()) {
+                const firstWords = text.split(/\s+/).slice(0, 5).join(' ');
+                currentNote.title = firstWords || 'Новая заметка';
+            }
         }
     }
 
+    // Переключение записи
     async function toggleRecording() {
-        if (session.isRecording) {
-            stopRecording();
+        if (isRecording) {
+            await stopRecording();
         } else {
             await startRecording();
         }
     }
 
+    // Начало записи
     async function startRecording() {
+        if (!asrClient) {
+            error = 'ASR клиент не инициализирован';
+            return;
+        }
+
         isConnecting = true;
         error = null;
 
         try {
-            sessionStore.startRecording();
+            // Проверяем поддержку браузером
+            if (!asrClient.isSupported()) {
+                throw new Error('Браузер не поддерживает запись аудио. Используйте Chrome или Edge.');
+            }
 
-            // TODO: Заглушка
-            setTimeout(() => {
-                if (isComponentMounted) {
-                    isConnecting = false;
-                    simulateTranscript('Тестовая запись голосового помощника.');
-                }
-            }, 800);
+            await asrClient.start();
+            isRecording = true;
+            isConnecting = false;
+            console.log('✅ Запись начата');
 
         } catch (err) {
-            if (isComponentMounted) {
-                console.error('Ошибка запуска записи:', err);
-                error = err.message;
-                isConnecting = false;
-                sessionStore.stopRecording();
+            console.error('Ошибка запуска записи:', err);
+            error = err.message || 'Не удалось начать запись. Проверьте разрешения на микрофон.';
+            isConnecting = false;
+            isRecording = false;
+
+            // Дополнительная информация для пользователя
+            if (err.name === 'NotAllowedError') {
+                error = 'Доступ к микрофону запрещен. Разрешите доступ в настройках браузера.';
+            } else if (err.name === 'NotFoundError') {
+                error = 'Микрофон не найден. Подключите микрофон и попробуйте снова.';
             }
         }
     }
 
-    function stopRecording() {
-        sessionStore.stopRecording();
+    // Остановка записи
+    async function stopRecording() {
+        await stopASR();
+        console.log('⏹️ Запись остановлена');
     }
 
-    function simulateTranscript(text) {
-        if (!session.isRecording || !isComponentMounted) return;
-
-        sessionStore.addTranscript(text);
-
-        if (session.isRecording && isComponentMounted) {
-            setTimeout(() => {
-                simulateTranscript('Продолжение тестовой записи.');
-            }, 1500);
-        }
-    }
-
-    async function saveNote() {
-        const text = session.currentText.trim();
-        if (!text) {
+    // Сохранение заметки
+    function saveNote() {
+        if (!currentNote || !currentNote.content.trim()) {
             alert('Нечего сохранить');
             return;
         }
 
-        try {
-            // Останавливаем автосохранение перед навигацией
-            if (autoSaveTimer) {
-                clearInterval(autoSaveTimer);
-                autoSaveTimer = null;
+        // Останавливаем запись перед сохранением
+        if (isRecording) {
+            stopRecording();
+        }
+
+        if (currentNote.draft) {
+            // Преобразуем черновик в полноценную заметку
+            const firstWords = currentNote.content.split(/\s+/).slice(0, 5).join(' ');
+            const newNote = {
+                ...currentNote,
+                id: 'note_' + Date.now(),
+                title: firstWords || 'Новая заметка',
+                draft: false,
+                createdAt: new Date(),
+                updatedAt: new Date()
+            };
+
+            // Удаляем черновик
+            const draftIndex = records.findIndex(n => n.id === 'draft_current');
+            if (draftIndex > -1) {
+                records.splice(draftIndex, 1);
             }
 
-            if (noteId) {
-                try {
-                    const existingNote = await notesStore.getNote(noteId);
-                    if (existingNote) {
-                        await notesStore.updateNote(noteId, { content: text });
-                    } else {
-                        await notesStore.addNote(text);
-                    }
-                } catch (error) {
-                    console.warn('Не удалось обновить заметку, создаем новую:', error);
-                    await notesStore.addNote(text);
-                }
-            } else {
-                await notesStore.addNote(text);
-                await notesStore.clearDraft();
-            }
+            // Добавляем новую заметку
+            records.push(newNote);
+        } else {
+            // Обновляем существующую заметку
+            currentNote.updatedAt = new Date();
+            currentNote.wordCount = currentNote.content.split(/\s+/).filter(w => w.length > 0).length;
 
-            // Не вызываем sessionStore.clear() - это вызывает обновление и ошибку курсора
-            // Вместо этого просто навигируем
-            navigateTo.list();
+            // SAVE
+            const text = editDiv.textContent || '';
+            currentNote.content = text;
 
-        } catch (err) {
-            console.error('Ошибка сохранения:', err);
-            alert('Не удалось сохранить заметку');
-
-            // Возобновляем автосохранение при ошибке
-            if (isComponentMounted && !autoSaveTimer) {
-                autoSaveTimer = setInterval(async () => {
-                    if (session.currentText.trim() && !noteId) {
-                        await notesStore.saveDraft(session.currentText);
-                    }
-                }, 5000);
+            if (!currentNote.title && currentNote.content.trim()) {
+                const firstWords = currentNote.content.split(/\s+/).slice(0, 5).join(' ');
+                currentNote.title = firstWords || 'Новая заметка';
             }
         }
+
+        navigateTo.list();
     }
 
+    // Обработка голосовых команд
     function handleCommand(command) {
-        switch(command) {
+        switch(command.toLowerCase()) {
             case 'абзац':
-                sessionStore.addParagraph();
+                if (currentNote) {
+                    currentNote.content += '\n\n';
+                    currentNote.updatedAt = new Date();
+                }
                 break;
             case 'стоп запись':
+            case 'остановить запись':
                 stopRecording();
                 break;
             case 'сохранить':
                 saveNote();
                 break;
             case 'удалить последнее слово':
-                sessionStore.undoLastWord();
+            case 'удали последнее слово':
+                if (currentNote) {
+                    const words = currentNote.content.trim().split(/\s+/);
+                    if (words.length > 0) {
+                        words.pop();
+                        currentNote.content = words.join(' ');
+                        currentNote.updatedAt = new Date();
+                        currentNote.wordCount = words.length;
+                    }
+                }
+                break;
+            case 'новая строка':
+                if (currentNote) {
+                    currentNote.content += '\n';
+                    currentNote.updatedAt = new Date();
+                }
                 break;
         }
     }
+
 </script>
 
 <div class="min-h-screen bg-gray-50 pb-16">
     <!-- Верхняя панель -->
-    <div class="bg-white border-b border-gray-200 px-4 py-3">
-        <div class="max-w-4xl mx-auto flex justify-between items-center">
-            <button
-                on:click={() => {
-                    // Останавливаем автосохранение
-                    if (autoSaveTimer) {
-                        clearInterval(autoSaveTimer);
-                        autoSaveTimer = null;
-                    }
-                    navigateTo.list();
-                }}
-                class="p-2 text-gray-600 hover:text-gray-900"
-                title="Назад"
-            >
-                {@html icons.back}
-            </button>
-
-            <div class="flex items-center gap-2">
-                <div class="flex items-center gap-1.5">
-                    <div class={`w-2 h-2 rounded-full ${session.isRecording ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                    <span class="text-xs text-gray-500">
-                        {session.isRecording ? 'запись' : 'пауза'}
-                    </span>
-                </div>
+    <div class="flex justify-between sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3">
+        <div class="flex items-center gap-3">
+            connectionStatus: {connectionStatus}
+            <div class="text-sm text-gray-600">
+                {#if isRecording}
+                    <span class="text-green-600 font-medium">Идет запись...</span>
+                {:else if isConnecting}
+                    <span class="text-yellow-600 font-medium">Подключение...</span>
+                {:else}
+                    <span>Готов к записи</span>
+                {/if}
             </div>
+        </div>
 
-            <button
-                on:click={saveNote}
-                disabled={!session.currentText.trim()}
-                class="p-2 text-green-600 hover:text-green-800 disabled:opacity-30 disabled:cursor-not-allowed"
-                title="Сохранить"
-            >
-                {@html icons.save}
-            </button>
+        <div>
+            <div class="flex items-center gap-2">
+                <button
+                    on:click={saveNote}
+                    class="p-2 text-green-600 hover:text-green-800 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Сохранить (Ctrl+S)"
+                    disabled={!currentNote?.content?.trim()}
+                >
+                    <CheckOutline class="h-6 w-6" />
+                </button>
+
+                <button
+                    on:click={toggleRecording}
+                    class={`p-2 rounded-full ${isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'}`}
+                    title={isRecording ? 'Остановить запись' : 'Начать запись'}
+                    disabled={isConnecting}
+                >
+                    {#if isConnecting}
+                        <div class="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                    {:else if isRecording}
+                        <div class="h-6 w-6 flex items-center justify-center">
+                            <div class="h-3 w-3 bg-red-600 rounded-sm"></div>
+                        </div>
+                    {:else}
+                        <MicrophoneOutline class="h-6 w-6" />
+                    {/if}
+                </button>
+            </div>
         </div>
     </div>
 
     <!-- Основной контент -->
-    <div class="max-w-4xl mx-auto px-4 py-6">
+    <div class="h-full max-w-4xl mx-auto px-4 py-6">
         <!-- Contenteditable область -->
-        <div class="bg-white border border-gray-300 rounded-lg p-4 min-h-[300px] mb-6">
+        <div class="h-full bg-white border border-gray-300 rounded-lg p-4 min-h-[300px]">
             <div
                 bind:this={editDiv}
                 contenteditable="true"
                 on:input={handleEditorInput}
-                on:keydown={handleEditorKeyDown}
-                on:blur={handleEditorBlur}
-                class="min-h-[280px] text-gray-800 text-base focus:outline-none whitespace-pre-wrap caret-blue-600"
-                placeholder="Текст будет появляться здесь по мере записи. Редактируйте текст вручную или используйте голосовые команды."
+                class="h-full min-h-[280px] text-gray-800 text-base focus:outline-none whitespace-pre-wrap caret-blue-600"
+                placeholder="Говорите - текст будет появляться здесь. Также можно редактировать вручную."
             >
-                {session.currentText}
+                {currentNote?.content || ''}
             </div>
         </div>
 
+        <!-- Ошибки и информация -->
         {#if error}
-            <div class="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg">
-                Ошибка: {error}
+            <div class="mt-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-200">
+                <div class="font-medium mb-1">Ошибка:</div>
+                {error}
+                {#if error.includes('микрофон')}
+                    <div class="mt-2 text-xs">
+                        Проверьте настройки микрофона в браузере
+                    </div>
+                {/if}
             </div>
         {/if}
-    </div>
 
-    <!-- Нижняя панель -->
-    <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-4">
-        <div class="max-w-4xl mx-auto">
-            <div class="flex flex-col items-center">
-                <button
-                    on:click={toggleRecording}
-                    disabled={isConnecting}
-                    class={`flex items-center justify-center w-14 h-14 rounded-full shadow-lg transition-all ${session.isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'} disabled:opacity-50`}
-                    title="{session.isRecording ? 'Остановить запись' : 'Начать запись'}"
-                >
-                    {#if isConnecting}
-                        {@html icons.loading}
-                    {:else if session.isRecording}
-                        {@html icons.stop}
-                    {:else}
-                        {@html icons.mic}
-                    {/if}
-                </button>
-
-                <div class="mt-3 text-xs text-gray-500 text-center">
-                    Голосовые команды:
-                    <span class="inline-flex items-center gap-1.5 mt-1">
-                        <span class="px-2 py-0.5 bg-gray-100 rounded">"абзац"</span>
-                        <span class="px-2 py-0.5 bg-gray-100 rounded">"стоп запись"</span>
-                        <span class="px-2 py-0.5 bg-gray-100 rounded">"сохранить"</span>
-                    </span>
-                </div>
-            </div>
-        </div>
     </div>
 </div>
 
@@ -369,5 +396,14 @@
     [contenteditable="true"]:focus {
         outline: none;
         box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+    }
+
+    .animate-spin {
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
     }
 </style>

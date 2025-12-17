@@ -12,16 +12,13 @@
 
 <!-- {@render children()} -->
 
-<div class="app h-full">
-        <Header />
+<div class="app h-full overflow-hidden">
+        <div class="flex items-center justify-center">
+            <Header />
+        </div>
 
-        <main class="h-full">
+        <main class="h-full overflow-hidden">
                 {@render children() }
         </main>
 
-        <footer>
-                <p>
-                        <!-- visit ... -->
-                </p>
-        </footer>
 </div>

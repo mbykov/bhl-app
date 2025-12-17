@@ -1,5 +1,7 @@
 node_modules
 
+TMP
+
 # Output
 .output
 .vercel

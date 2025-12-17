@@ -247,15 +247,17 @@ export class SherpaASRClient {
     handleServerMessage(message) {
         try {
             const data = JSON.parse(message);
-
+            // console.log('_p', data);
             if (data.text && data.text.trim()) {
-                this.emit('transcript', {
-                    text: data.text,
-                    isFinal: data.is_final || false,
-                    timestamp: new Date().toISOString()
-                });
+                // ====================== ME
+                // this.emit('transcript', {
+                //     text: data.text,
+                //     isFinal: data.is_final || false,
+                //     timestamp: new Date().toISOString()
+                // });
+                this.emit('transcript', data);
 
-                console.log(`📥 ${data.is_final ? '[FINAL]' : '[PARTIAL]'}: ${data.text}`);
+                // console.log(`📥 ${data.is_final ? '[FINAL]' : '[PARTIAL]'}: ${data.text}`);
             }
         } catch (error) {
             console.warn('Invalid server message:', message);
