@@ -4,6 +4,8 @@
     import { navigateTo, currentNoteId } from '$lib/store.js';
     import { createPersistedArray } from '$lib/stores/persisted-store.svelte.js';
     import { SherpaASRClient } from '$lib/asr-client.js';
+    import { createTranscriptProcessor } from '$lib/transcript-processor.js';
+    import { createCommandProcessor } from '$lib/command-processor.js';
     import { MicrophoneOutline, CheckOutline } from "flowbite-svelte-icons";
 
     // Подключаемся к тому же хранилищу
@@ -11,6 +13,10 @@
 
     // ASR клиент
     let asrClient = null;
+
+    // Независимые процессоры
+    let transcriptProcessor = null;
+    let commandProcessor = null;
 
     // Подписка на currentNoteId
     let noteId = $state(null);
@@ -24,61 +30,33 @@
     let isRecording = $state(false);
     let isConnecting = $state(false);
     let error = $state(null);
-    let connectionStatus = $state('disconnected'); // disconnected, connecting, connected
+    let connectionStatus = $state('disconnected');
 
-    let localUpdate = ''
-    // Инициализация ASR клиента
-    let segment = -1
+    let oldtranscript = ''
+    // Инициализация
     onMount(() => {
+        // Инициализируем независимые процессоры
+        transcriptProcessor = createTranscriptProcessor();
+        commandProcessor = createCommandProcessor();
+
+        console.log('🔄 Инициализированы процессоры:');
+        console.log('📝 Transcript Processor:', transcriptProcessor.getCommandsInfo ? 'available' : 'ready');
+        console.log('🔧 Command Processor:', commandProcessor.getCommandsInfo?.()?.length || 0, 'команд');
+
+        // Инициализируем ASR клиент
         asrClient = new SherpaASRClient();
 
         // Подписываемся на события ASR
         asrClient.on('transcript', (data) => {
-            if (currentNote && data.text && data.text.trim()) {
-                let transcript = data.text.trim();
-                // console.log('_transcript', data)
-                // Добавляем пробел перед новым текстом, если уже есть текст
-                // const separator = currentNote.content && !currentNote.content.endsWith(' ') ? ' ' : '';
-                const separator = !currentNote.content.endsWith(' ') ? ' ' : '';
-                // currentNote.content += separator + transcript;
-                // currentNote.content = separator + transcript;
-                transcript = separator + transcript
-                // =======
-                console.log('_segment__________________', segment, data.segment)
-                if (data.segment != segment) {
-                //     console.log('_segment__________________', data.segment, segment)
-                //     console.log('_transcript__________________', transcript)
-                //     console.log('_currentNote.content__________________', currentNote.content)
-                    segment = data.segment
-                    currentNote.content = editDiv.textContent
-                //     currentNote.content += ' seg_tr:' + transcript;
-                //     editDiv.textContent = currentNote.content;
-                //     console.log('_editDiv.textContent__________________', editDiv.textContent)
-                    // editDiv.textContent = currentNote.content + transcript;
-                } else {
-                //     console.log('_segment_', data.segment, segment)
-                //     console.log('_transcript_', transcript)
-                //     console.log('_currentNote.content_', currentNote.content)
-                //     editDiv.textContent = currentNote.content + ' tr:' + transcript;
-                //     console.log('_editDiv.textContent_', editDiv.textContent)
-                    editDiv.textContent = currentNote.content + transcript;
-                }
-                // ======
-                currentNote.updatedAt = new Date();
-                currentNote.wordCount = currentNote.content.split(/\s+/).filter(w => w.length > 0).length;
-
-                console.log(`📝 ${data.is_final ? '[FINAL]' : '[PARTIAL]'}: ${transcript}`);
-
-                // Если это финальный результат, добавляем пробел для следующей фразы
-                if (data.is_final) {
-                    currentNote.content += ' FINAL!!!!!!!!!!';
-                }
-            }
+            if (oldtranscript == data.text) return // NB:
+            oldtranscript = data.text
+            console.log('______________________________________DATA', data.text)
+            handleASRTranscript(data);
         });
 
         asrClient.on('status', (status) => {
-            console.log('ASR Status:', status);
             connectionStatus = status.connected ? 'connected' : 'disconnected';
+            console.log('📡 Статус ASR:', connectionStatus);
         });
 
         asrClient.on('error', (err) => {
@@ -90,12 +68,11 @@
 
         // Находим или создаем заметку
         if (noteId) {
-            // Ищем существующую заметку
             const found = records.find(n => n.id === noteId);
             if (found) {
                 currentNote = found;
+                console.log('📝 Загружена заметка:', found.title);
             } else {
-                // Если не нашли, сбрасываем
                 noteId = null;
                 currentNote = null;
                 createOrLoadDraft();
@@ -105,18 +82,212 @@
         }
     });
 
-    // Синхронизируем редактор с текстом заметки
-    $effect(() => {
-        if (editDiv && currentNote && editDiv.textContent !== currentNote.content) {
-            // editDiv.textContent = currentNote.content;
+    // Обработчик транскрипции от ASR
+    function handleASRTranscript(data) {
+        if (!currentNote || !data.text?.trim()) {
+            console.log('⏭️ Пропуск: нет заметки или текста');
+            return;
         }
-    });
+
+        const transcript = data.text.trim();
+        console.log('🎤 ASR ->', transcript, 'сегмент:', data.segment);
+
+        // ШАГ 1: Анализ команд (независимо)
+        const commandAnalysis = commandProcessor.analyze(transcript);
+        console.log('📊 Анализ команд:', {
+            оригинал: commandAnalysis.originalText,
+            обработанный: commandAnalysis.processedText,
+            команды: commandAnalysis.commands.map(c => c.name)
+        });
+
+        // ШАГ 2: Обработка текста (независимо)
+        const textToProcess = commandAnalysis.processedText;
+        if (textToProcess.trim()) {
+            const transcriptResult = transcriptProcessor.process(
+                { text: textToProcess, segment: data.segment },
+                currentNote,
+                editDiv
+            );
+
+            if (transcriptResult) {
+                console.log('📝 Результат обработки текста:', {
+                    сегмент: transcriptResult.segment,
+                    текстСегмента: transcriptResult.segmentText,
+                    отображаемыйТекст: transcriptResult.displayText
+                });
+            }
+        }
+
+        console.log('______________commandAnalysis.commands:', commandAnalysis.commands);
+        // ШАГ 3: Выполнение команд (после обновления текста)
+        if (commandAnalysis.commands.length > 0) {
+            console.log('▶️ Выполнение команд:', commandAnalysis.commands.map(c => c.name));
+
+            // ОСОБАЯ ОБРАБОТКА ДЛЯ КОМАНДЫ UNDO
+            const undoCommands = commandAnalysis.commands.filter(cmd => cmd.name === 'undo');
+            if (undoCommands.length > 0) {
+                // Для команды undo сначала обрабатываем текст, потом выполняем
+                undoCommands.forEach(cmd => {
+                    executeCommand(cmd);
+                });
+
+                // Другие команды выполняем как обычно
+                const otherCommands = commandAnalysis.commands.filter(cmd => cmd.name !== 'undo');
+                otherCommands.forEach(cmd => {
+                    executeCommand(cmd);
+                });
+            } else {
+                // Все команды кроме undo
+                commandAnalysis.commands.forEach(cmd => {
+                    executeCommand(cmd);
+                });
+            }
+        }
+
+
+        // Проверка что команды работают
+        console.log('🧪 Тест команд:');
+        console.log('  "отменить" ->', commandProcessor.testCommand('отменить', 'undo'));
+        console.log('  "отмена" ->', commandProcessor.testCommand('отмена', 'undo'));
+        console.log('  "абзац" ->', commandProcessor.testCommand('абзац', 'paragraph'));
+    }
+
+    // Выполнение конкретной команды
+    function executeCommand(cmd) {
+        console.log(`▶️ Выполняю: ${cmd.name} (${cmd.action})`);
+
+        switch(cmd.action) {
+            case 'addParagraph':
+                handleCommandParagraph();
+                break;
+
+            case 'undoLastWord':
+                handleCommandUndo();
+                break;
+
+            case 'saveNote':
+                handleCommandSave();
+                break;
+
+            case 'startRecording':
+                handleCommandStartRecording();
+                break;
+
+            case 'stopRecording':
+                handleCommandStopRecording();
+                break;
+
+            default:
+                console.warn(`⚠️ Неизвестное действие: ${cmd.action}`);
+        }
+    }
+
+    // Обработчики команд
+    function handleCommandParagraph() {
+        console.log('📝 Команда: добавить абзац');
+        if (!currentNote) return;
+
+        // Сохраняем текущий сегмент
+        if (transcriptProcessor?.commitSegment) {
+            transcriptProcessor.commitSegment(currentNote);
+        }
+
+        // Добавляем абзац
+        currentNote.content += '\n\n';
+        currentNote.updatedAt = new Date();
+
+        if (editDiv) {
+            editDiv.textContent = currentNote.content;
+        }
+
+        console.log('✅ Абзац добавлен');
+    }
+
+    function handleCommandUndo() {
+        console.log('↩️ Команда: отменить последнее слово');
+        if (!currentNote) return;
+
+        // Получаем полный текущий текст (сохраненный + текущий сегмент)
+        let fullText = currentNote.content || '';
+
+        // Добавляем текущий сегмент если есть
+        if (transcriptProcessor?.getSegmentText) {
+            const segmentText = transcriptProcessor.getSegmentText();
+            if (segmentText) {
+                const separator = fullText && !fullText.endsWith(' ') ? ' ' : '';
+                fullText += separator + segmentText;
+
+                // Очищаем текущий сегмент
+                transcriptProcessor.clearSegment();
+            }
+        }
+
+        console.log('📝 Полный текст перед удалением:', fullText);
+
+        // Удаляем последнее слово
+        if (fullText.trim()) {
+            const words = fullText.trim().split(/\s+/);
+
+            // Находим и удаляем команду "отменить" или "отмена" если она есть
+            const lastWordIndex = words.length - 1;
+            const undoWords = ['отменить', 'отмена'];
+
+            let wordsToRemove = 1; // По умолчанию удаляем одно слово
+
+            // Если последнее слово - команда undo, удаляем ее И слово перед ней
+            if (lastWordIndex >= 0 && undoWords.includes(words[lastWordIndex].toLowerCase())) {
+                wordsToRemove = 2; // Удаляем команду И слово перед ней
+                console.log('🗑️ Удаляю команду и слово перед ней');
+            }
+
+            // Удаляем нужное количество слов с конца
+            for (let i = 0; i < wordsToRemove && words.length > 0; i++) {
+                words.pop();
+            }
+
+            // Обновляем текст
+            fullText = words.join(' ') + (words.length > 0 ? ' ' : '');
+
+            console.log(`🗑️ Удалено ${wordsToRemove} слов. Осталось:`, words.length);
+        }
+
+        // Обновляем заметку
+        currentNote.content = fullText;
+        currentNote.updatedAt = new Date();
+        currentNote.wordCount = fullText.split(/\s+/).filter(w => w.length > 0).length;
+
+        // Обновляем редактор
+        if (editDiv) {
+            editDiv.textContent = fullText;
+        }
+
+        console.log('✅ Результат:', fullText);
+    }
+
+    function handleCommandSave() {
+        console.log('💾 Команда: сохранить');
+        saveNote();
+    }
+
+    function handleCommandStartRecording() {
+        console.log('🎙️ Команда: начать запись');
+        if (!isRecording) {
+            startRecording();
+        }
+    }
+
+    function handleCommandStopRecording() {
+        console.log('⏹️ Команда: остановить запись');
+        if (isRecording) {
+            stopRecording();
+        }
+    }
 
     function createOrLoadDraft() {
-        // Ищем черновик или создаем новую структуру
         const draft = records.find(n => n.id === 'draft_current');
         if (draft) {
             currentNote = draft;
+            console.log('📝 Загружен черновик:', draft.content?.length || 0, 'символов');
         } else {
             currentNote = {
                 id: 'draft_current',
@@ -128,10 +299,11 @@
                 draft: true
             };
             records.push(currentNote);
+            console.log('📝 Создан новый черновик');
         }
     }
 
-    // Очистка при размонтировании
+    // Очистка
     onDestroy(() => {
         unsubscribeNoteId?.();
         stopASR();
@@ -148,19 +320,29 @@
         }
         isRecording = false;
         isConnecting = false;
+
+        // Сбрасываем процессоры
+        if (transcriptProcessor?.reset) {
+            transcriptProcessor.reset();
+        }
     }
 
     // Обработчик ввода в редакторе
     function handleEditorInput() {
-        // return
         if (!editDiv || !currentNote) return;
         const text = editDiv.textContent || '';
+
+        // При ручном редактировании сохраняем текущий сегмент
+        if (transcriptProcessor?.commitSegment) {
+            transcriptProcessor.commitSegment(currentNote);
+        }
+
         if (text !== currentNote.content) {
-            // currentNote.content = text;
+            currentNote.content = text;
             currentNote.updatedAt = new Date();
             currentNote.wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
 
-            // Автогенерация заголовка для новых заметок
+            // Автогенерация заголовка
             if (!currentNote.draft && !currentNote.title && text.trim()) {
                 const firstWords = text.split(/\s+/).slice(0, 5).join(' ');
                 currentNote.title = firstWords || 'Новая заметка';
@@ -188,9 +370,8 @@
         error = null;
 
         try {
-            // Проверяем поддержку браузером
             if (!asrClient.isSupported()) {
-                throw new Error('Браузер не поддерживает запись аудио. Используйте Chrome или Edge.');
+                throw new Error('Браузер не поддерживает запись аудио');
             }
 
             await asrClient.start();
@@ -200,39 +381,44 @@
 
         } catch (err) {
             console.error('Ошибка запуска записи:', err);
-            error = err.message || 'Не удалось начать запись. Проверьте разрешения на микрофон.';
+            error = err.message || 'Не удалось начать запись';
             isConnecting = false;
             isRecording = false;
-
-            // Дополнительная информация для пользователя
-            if (err.name === 'NotAllowedError') {
-                error = 'Доступ к микрофону запрещен. Разрешите доступ в настройках браузера.';
-            } else if (err.name === 'NotFoundError') {
-                error = 'Микрофон не найден. Подключите микрофон и попробуйте снова.';
-            }
         }
     }
 
     // Остановка записи
     async function stopRecording() {
+        // Сохраняем текущий сегмент перед остановкой
+        if (transcriptProcessor?.commitSegment && currentNote) {
+            transcriptProcessor.commitSegment(currentNote);
+        }
+
         await stopASR();
         console.log('⏹️ Запись остановлена');
     }
 
     // Сохранение заметки
     function saveNote() {
-        if (!currentNote || !currentNote.content.trim()) {
-            alert('Нечего сохранить');
-            return;
+        if (!currentNote) {
+            createOrLoadDraft();
         }
 
-        // Останавливаем запись перед сохранением
+        // Сохраняем текущий сегмент перед сохранением
+        if (transcriptProcessor?.commitSegment) {
+            transcriptProcessor.commitSegment(currentNote);
+        }
+
+        // Синхронизируем содержимое из редактора
+        if (editDiv) {
+            currentNote.content = editDiv.textContent || '';
+        }
+
         if (isRecording) {
             stopRecording();
         }
 
         if (currentNote.draft) {
-            // Преобразуем черновик в полноценную заметку
             const firstWords = currentNote.content.split(/\s+/).slice(0, 5).join(' ');
             const newNote = {
                 ...currentNote,
@@ -243,79 +429,40 @@
                 updatedAt: new Date()
             };
 
-            // Удаляем черновик
             const draftIndex = records.findIndex(n => n.id === 'draft_current');
             if (draftIndex > -1) {
                 records.splice(draftIndex, 1);
             }
 
-            // Добавляем новую заметку
             records.push(newNote);
+            console.log('💾 Сохранена новая заметка:', newNote.title);
         } else {
-            // Обновляем существующую заметку
             currentNote.updatedAt = new Date();
             currentNote.wordCount = currentNote.content.split(/\s+/).filter(w => w.length > 0).length;
-
-            // SAVE
-            const text = editDiv.textContent || '';
-            currentNote.content = text;
 
             if (!currentNote.title && currentNote.content.trim()) {
                 const firstWords = currentNote.content.split(/\s+/).slice(0, 5).join(' ');
                 currentNote.title = firstWords || 'Новая заметка';
             }
+
+            console.log('💾 Обновлена заметка:', currentNote.title);
         }
 
         navigateTo.list();
     }
-
-    // Обработка голосовых команд
-    function handleCommand(command) {
-        switch(command.toLowerCase()) {
-            case 'абзац':
-                if (currentNote) {
-                    currentNote.content += '\n\n';
-                    currentNote.updatedAt = new Date();
-                }
-                break;
-            case 'стоп запись':
-            case 'остановить запись':
-                stopRecording();
-                break;
-            case 'сохранить':
-                saveNote();
-                break;
-            case 'удалить последнее слово':
-            case 'удали последнее слово':
-                if (currentNote) {
-                    const words = currentNote.content.trim().split(/\s+/);
-                    if (words.length > 0) {
-                        words.pop();
-                        currentNote.content = words.join(' ');
-                        currentNote.updatedAt = new Date();
-                        currentNote.wordCount = words.length;
-                    }
-                }
-                break;
-            case 'новая строка':
-                if (currentNote) {
-                    currentNote.content += '\n';
-                    currentNote.updatedAt = new Date();
-                }
-                break;
-        }
-    }
-
 </script>
 
 <div class="min-h-screen bg-gray-50 pb-16">
     <!-- Верхняя панель -->
     <div class="flex justify-between sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3">
         <div class="flex items-center gap-3">
-            connectionStatus: {connectionStatus}
+            <!-- Индикатор статуса -->
+            <div class={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : connectionStatus === 'connected' ? 'bg-green-500' : 'bg-gray-400'}`}
+                 title="{isRecording ? 'Идет запись' : connectionStatus === 'connected' ? 'Подключено' : 'Отключено'}">
+            </div>
             <div class="text-sm text-gray-600">
                 {#if isRecording}
-                    <span class="text-green-600 font-medium">Идет запись...</span>
+                    <span class="text-red-600 font-medium">Идет запись</span>
                 {:else if isConnecting}
                     <span class="text-yellow-600 font-medium">Подключение...</span>
                 {:else}
@@ -329,8 +476,7 @@
                 <button
                     on:click={saveNote}
                     class="p-2 text-green-600 hover:text-green-800 disabled:opacity-30 disabled:cursor-not-allowed"
-                    title="Сохранить (Ctrl+S)"
-                    disabled={!currentNote?.content?.trim()}
+                    title="Сохранить"
                 >
                     <CheckOutline class="h-6 w-6" />
                 </button>
@@ -364,25 +510,26 @@
                 contenteditable="true"
                 on:input={handleEditorInput}
                 class="h-full min-h-[280px] text-gray-800 text-base focus:outline-none whitespace-pre-wrap caret-blue-600"
-                placeholder="Говорите - текст будет появляться здесь. Также можно редактировать вручную."
+                placeholder="Говорите - текст будет появляться здесь. Команды: абзац, отменить, сохранить, запись, стоп запись"
             >
                 {currentNote?.content || ''}
             </div>
         </div>
 
-        <!-- Ошибки и информация -->
+        <!-- Ошибки -->
         {#if error}
             <div class="mt-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-200">
                 <div class="font-medium mb-1">Ошибка:</div>
                 {error}
-                {#if error.includes('микрофон')}
-                    <div class="mt-2 text-xs">
-                        Проверьте настройки микрофона в браузере
-                    </div>
-                {/if}
             </div>
         {/if}
 
+        <!-- Отладочная информация (можно убрать в продакшене) -->
+        <div class="mt-4 p-3 bg-gray-50 text-gray-600 text-xs rounded-lg border border-gray-200">
+            <div class="font-medium mb-1">Отладка:</div>
+            <div>Статус: {connectionStatus} | Запись: {isRecording ? 'да' : 'нет'}</div>
+            <div>Заметка: {currentNote?.title || 'черновик'} ({currentNote?.wordCount || 0} слов)</div>
+        </div>
     </div>
 </div>
 
