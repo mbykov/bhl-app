@@ -142,8 +142,23 @@ export class SherpaASRClient {
             };
 
             this.ws.onmessage = (event) => {
+                // const data = JSON.parse(event.data);
+                // console.log('📝 Данные от сервера:', data);
                 this.handleServerMessage(event.data);
             };
+
+            // this.ws.onmessage = (event) => {
+            //     console.log('📨 WebSocket сообщение получено:', event.data);
+            //     try {
+            //         const data = JSON.parse(event.data);
+            //         console.log('📝 Данные от сервера:', data);
+            //         if (this.onTranscript) {
+            //             this.onTranscript(data);
+            //         }
+            //     } catch (err) {
+            //         console.error('Ошибка парсинга WebSocket сообщения:', err);
+            //     }
+            // };
 
             this.ws.onerror = (error) => {
                 clearTimeout(timeout);
@@ -240,6 +255,7 @@ export class SherpaASRClient {
             view.setFloat32(i * 4, float32Array[i], true);
         }
 
+        // console.log('🎵 Отправка аудио данных, размер:', buffer.byteLength);
         // Send binary data
         this.ws.send(buffer);
     }

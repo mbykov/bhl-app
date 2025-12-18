@@ -1,120 +1,167 @@
-// src/lib/command-processor.js
-export function createCommandProcessor() {
-    // Команды с паттернами (исправлены регулярные выражения)
-    const commands = {
-        'paragraph': {
-            // patterns: [/\bабзац\b/i, /\bновая строка\b/i],
-            patterns: [/абзац/i, /новая строка/i],
-            action: 'addParagraph'
-        },
-        'undo': {
-            // patterns: [/\bотменить\b/i, /\bотмена\b/i, /\bудали последнее\b/i],
-            patterns: [/отменить/i, /отмена/i, /удали последнее/i],
-            action: 'undoLastWord'
-        },
-        'save': {
-            patterns: [/\bсохранить\b/i, /\bсохрани\b/i],
-            action: 'saveNote'
-        },
-        'startRecording': {
-            patterns: [/\bзапись\b/i, /\bначать запись\b/i],
-            action: 'startRecording'
-        },
-        'stopRecording': {
-            patterns: [/\bстоп запись\b/i, /\bостановить запись\b/i],
-            action: 'stopRecording'
-        }
-    };
+// $lib/command-processor.js
 
-    // Преобразование "слово X" -> "X"
-    const wordPatterns = [
-        { pattern: /\bслово абзац\b/gi, replacement: 'абзац' },
-        { pattern: /\bслово отменить\b/gi, replacement: 'отменить' },
-        { pattern: /\bслово отмена\b/gi, replacement: 'отмена' },
-        { pattern: /\bслово сохранить\b/gi, replacement: 'сохранить' },
-        { pattern: /\bслово запись\b/gi, replacement: 'запись' }
-    ];
+// Команды с полными фразами
+const COMMANDS = [
+    {
+        name: 'undo',
+        synonyms: ['отмена', 'отменить'],
+        pattern: /(отмена|отменить)$/i
+    },
+    {
+        name: 'paragraph',
+        synonyms: ['абзац', 'с новой строки', 'новая строка'],
+        pattern: /(абзац|с новой строки|новая строка)$/i
+    },
+    {
+        name: 'saveNote',
+        synonyms: ['сохранить', 'сохранить заметку'],
+        pattern: /(сохранить|сохранить заметку)$/i
+    },
+    {
+        name: 'record',
+        synonyms: ['запись', 'начать запись'],
+        pattern: /(запись|начать запись)$/i
+    },
+    {
+        name: 'stop',
+        synonyms: ['стоп', 'стоп запись'],
+        pattern: /(стоп|стоп запись)$/i
+    }
+];
+
+// Инициализируем паттерны
+COMMANDS.forEach(cmd => {
+    const escapedSynonyms = cmd.synonyms.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    cmd.pattern = new RegExp(`\\s*(${escapedSynonyms.join('|')})\\s*$`, 'i');
+});
+
+/**
+ * Обрабатывает сегмент текста, извлекает команду (если есть)
+ * @param {string} text - Текст сегмента
+ * @returns {Object} { text: очищенный текст, command: имя команды или null, original: оригинальный текст }
+ */
+export function processSegment(text) {
+    if (!text || !text.trim()) {
+        return { text: '', command: null, original: '' };
+    }
+
+    const original = text.trim();
+    let cleanedText = original;
+    let foundCommand = null;
+
+    // Ищем команду в конце текста
+    for (const cmd of COMMANDS) {
+        const match = original.match(cmd.pattern);
+        if (match) {
+            foundCommand = cmd.name;
+            // Удаляем команду из текста
+            cleanedText = original.replace(cmd.pattern, '').trim();
+            break;
+        }
+    }
 
     return {
-        // Анализ текста на наличие команд
-        analyze(text) {
-            if (!text || !text.trim()) {
-                return {
-                    originalText: text || '',
-                    processedText: text || '',
-                    commands: []
-                };
-            }
-
-            const lowerText = text.toLowerCase();
-            const foundCommands = [];
-            let processedText = text;
-
-            console.log('🔍 Анализ текста на команды:', text);
-
-            // 1. Сначала преобразуем "слово X" в "X"
-            wordPatterns.forEach(({ pattern, replacement }) => {
-                processedText = processedText.replace(pattern, replacement);
-            });
-
-            // 2. Ищем команды в ОРИГИНАЛЬНОМ тексте (не в processedText)
-            Object.entries(commands).forEach(([cmdName, cmdConfig]) => {
-                cmdConfig.patterns.forEach(pattern => {
-                    if (pattern.test(text)) { // Ищем в оригинальном text
-                        const match = text.match(pattern);
-                        if (match) {
-                            foundCommands.push({
-                                name: cmdName,
-                                action: cmdConfig.action,
-                                pattern: pattern.toString(),
-                                match: match[0]
-                            });
-                            console.log(`🔧 Найдена команда: ${cmdName} (${match[0]})`);
-                        }
-                    }
-                });
-            });
-
-            // 3. Удаляем КОМАНДЫ из processedText (только команды undo и stopRecording)
-            foundCommands.forEach(cmd => {
-                if (['undo', 'stopRecording'].includes(cmd.name)) {
-                    // Удаляем команду из processedText
-                    const cmdRegex = new RegExp(cmd.match, 'gi');
-                    processedText = processedText.replace(cmdRegex, '').trim();
-                    processedText = processedText.replace(/\s+/g, ' ').trim();
-                    console.log(`🗑️ Удалена команда "${cmd.match}" из текста`);
-                }
-            });
-
-            // 4. Если нашли команды undo, нужно удалить слово ПЕРЕД командой
-            const undoCommands = foundCommands.filter(cmd => cmd.name === 'undo');
-            if (undoCommands.length > 0) {
-                console.log('⚠️ Найдены команды undo, нужна специальная обработка');
-                // Специальная обработка будет в Asr.svelte
-            }
-
-            return {
-                originalText: text,
-                processedText: processedText,
-                commands: foundCommands
-            };
-        },
-
-        // Для отладки
-        getCommandsInfo() {
-            return Object.entries(commands).map(([name, config]) => ({
-                name,
-                patterns: config.patterns.map(p => p.toString()),
-                action: config.action
-            }));
-        },
-
-        // Проверка конкретного текста на команду (для тестов)
-        testCommand(text, commandName) {
-            const cmd = commands[commandName];
-            if (!cmd) return false;
-
-            return cmd.patterns.some(pattern => pattern.test(text));
-        }
+        text: cleanedText,
+        command: foundCommand,
+        original: original,
+        hasCommand: foundCommand !== null
     };
+}
+
+/**
+ * Выполняет команду над текущим состоянием заметки
+ * @param {string} commandName - Имя команды
+ * @param {string} textBeforeCommand - Текст до команды
+ * @param {string} currentNoteContent - Текущее содержимое заметки
+ * @returns {Object} { newContent: новое содержимое, action: дополнительное действие }
+ */
+export function executeCommand(commandName, textBeforeCommand, currentNoteContent = '') {
+    // console.log('🔧 EXECUTE COMMAND вызван:');
+    // console.log('- Команда:', commandName);
+    // console.log('- Текст до команды:', textBeforeCommand);
+    // console.log('- Текущее содержимое заметки:', currentNoteContent);
+
+    let newContent = currentNoteContent || '';
+    const action = { type: 'none' };
+
+    // Добавляем текст перед командой (если есть)
+    if (textBeforeCommand.trim()) {
+        newContent = addTextWithSpace(newContent, textBeforeCommand);
+    }
+
+    switch (commandName) {
+    case 'undo':
+        // Удаляем последнее слово из заметки
+        if (newContent.trim()) {
+            const words = newContent.trim().split(/\s+/);
+            if (words.length > 0) {
+                words.pop(); // Удаляем последнее слово
+                newContent = words.join(' ');
+                if (words.length > 0) {
+                    newContent += ' ';
+                }
+            }
+        }
+        break;
+
+    case 'paragraph':
+        // Добавляем абзац
+        newContent = addTextWithSpace(newContent, '\n\n');
+        break;
+
+    case 'saveNote':
+        // Сохраняем заметку
+        action.type = 'save';
+        break;
+
+    case 'record':
+        // Начать запись
+        action.type = 'startRecording';
+        break;
+
+    case 'stop':
+        // Остановить запись
+        action.type = 'stopRecording';
+        break;
+
+    default:
+        // Неизвестная команда - просто добавляем текст
+        console.warn(`Неизвестная команда: ${commandName}`);
+    }
+
+    return { newContent, action };
+}
+
+/**
+ * Добавляет текст с правильным пробелом
+ */
+function addTextWithSpace(existingText, textToAdd) {
+    if (!textToAdd) return existingText;
+
+    if (!existingText) {
+        return textToAdd;
+    }
+
+    // Если добавляем абзац, не добавляем лишний пробел
+    if (textToAdd === '\n\n') {
+        return existingText + textToAdd;
+    }
+
+    // Проверяем, нужно ли добавить пробел
+    const lastChar = existingText[existingText.length - 1];
+    const firstChar = textToAdd[0];
+
+    if (lastChar === ' ' || lastChar === '\n' || firstChar === ' ' || firstChar === '\n') {
+        return existingText + textToAdd;
+    } else {
+        return existingText + ' ' + textToAdd;
+    }
+}
+
+/**
+ * Определяет, содержит ли текст команду
+ */
+export function containsCommand(text) {
+    if (!text) return false;
+    return COMMANDS.some(cmd => text.match(cmd.pattern));
 }
