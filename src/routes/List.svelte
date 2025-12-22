@@ -8,6 +8,7 @@
     // Используем persisted array для заметок
     let records = createPersistedArray('voice-notes', []);
 
+    console.log('_R', records)
     // Фильтруем черновики для отображения
     let notes = $derived(
       records
@@ -57,7 +58,7 @@
                 <h3 class="text-lg font-medium text-gray-900 mb-2">Заметок пока нет</h3>
                 <p class="text-gray-600 mb-6">Создайте первую голосовую заметку</p>
                 <button
-                    on:click={() => navigateTo.asr()}
+                    onclick={() => navigateTo.asr()}
                     class="px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
                 >
                     Начать запись
@@ -68,7 +69,7 @@
             <div class="space-y-3">
                 {#each notes as note (note.id)}
                     <div
-                        on:click={() => navigateTo.asr(note.id)}
+                        onclick={() => navigateTo.asr(note.id)}
                         class="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm transition-shadow cursor-pointer group"
                     >
                         <div class="flex justify-between items-start">
@@ -80,7 +81,7 @@
                                 <!-- </p> -->
                             </div>
                             <button
-                                on:click={(e) => deleteNote(note, e)}
+                                onclick={(e) => deleteNote(note, e)}
                                 class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50 transition-all ml-2 flex-shrink-0"
                                 title="Удалить"
                             >

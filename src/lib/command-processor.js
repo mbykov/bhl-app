@@ -5,35 +5,55 @@ const COMMANDS = [
     {
         name: 'undo',
         synonyms: ['отмена', 'отменить'],
-        pattern: /(отмена|отменить)$/i
+        // edit: true,
+        system: false,
+        // pattern: /(отмена|отменить)/i
     },
     {
         name: 'paragraph',
         synonyms: ['абзац', 'с новой строки', 'новая строка'],
-        pattern: /(абзац|с новой строки|новая строка)$/i
+        // edit: true,
+        system: false,
+        // pattern: /(абзац|с новой строки|новая строка)/i
     },
     {
         name: 'saveNote',
-        synonyms: ['сохранить', 'сохранить заметку'],
-        pattern: /(сохранить|сохранить заметку)$/i
+        synonyms: ['сохранить', 'сохранить запись'],
+        // edit: false,
+        system: true,
+        // pattern: /(сохранить|сохранить заметку)/i
+    },
+    {
+        name: 'cleanNote',
+        synonyms: ['очистить запись', 'заново запись'],
+        system: true,
     },
     {
         name: 'record',
         synonyms: ['запись', 'начать запись'],
-        pattern: /(запись|начать запись)$/i
+        // edit: false,
+        system: true,
+        // pattern: /(запись|начать запись)/i
     },
     {
-        name: 'stop',
+        name: 'stopRecord',
         synonyms: ['стоп', 'стоп запись'],
-        pattern: /(стоп|стоп запись)$/i
+        // edit: false,
+        system: true,
+        // pattern: /(стоп|стоп запись)/i
     }
 ];
 
 // Инициализируем паттерны
 COMMANDS.forEach(cmd => {
-    const escapedSynonyms = cmd.synonyms.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    cmd.pattern = new RegExp(`\\s*(${escapedSynonyms.join('|')})\\s*$`, 'i');
+    // const escapedSynonyms = cmd.synonyms.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    // cmd.pattern = new RegExp(`\\s*(${escapedSynonyms.join('|')})\\s*$`, 'i');
+    const synonyms = cmd.synonyms.join('|')
+    cmd.pattern = new RegExp('(' + synonyms + ')', 'i');
 });
+
+console.log('_COMMANDS', COMMANDS)
+
 
 /**
  * Обрабатывает сегмент текста, извлекает команду (если есть)
@@ -48,23 +68,29 @@ export function processSegment(text) {
     const original = text.trim();
     let cleanedText = original;
     let foundCommand = null;
+    let system = false
+    let command = null
 
-    // Ищем команду в конце текста
+    // Ищем команду
     for (const cmd of COMMANDS) {
         const match = original.match(cmd.pattern);
         if (match) {
+            system = cmd.system
             foundCommand = cmd.name;
             // Удаляем команду из текста
             cleanedText = original.replace(cmd.pattern, '').trim();
+            command = cmd
             break;
         }
     }
 
+    return command
     return {
+        system: system,
         text: cleanedText,
         command: foundCommand,
         original: original,
-        hasCommand: foundCommand !== null
+        // hasCommand: foundCommand !== null
     };
 }
 
@@ -159,7 +185,7 @@ function addTextWithSpace(existingText, textToAdd) {
 }
 
 /**
- * Определяет, содержит ли текст команду
+ * Определяет, содержит ли текст любьую команду
  */
 export function containsCommand(text) {
     if (!text) return false;

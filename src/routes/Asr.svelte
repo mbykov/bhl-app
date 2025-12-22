@@ -1,11 +1,13 @@
 <!-- src/routes/Asr.svelte -->
 <script>
     import { onMount, onDestroy } from 'svelte';
-    import { navigateTo } from '$lib/store.js';
+    import { navigateTo, currentNoteId } from '$lib/store.js';
     import { processSegment, executeCommand } from '$lib/command-processor.js';
     import { SherpaASRClient } from '$lib/asr-client.js';
 
+    import { icons } from '$lib/images/icons.js';
     import { MicrophoneOutline, CheckOutline } from "flowbite-svelte-icons";
+    import { createPersistedArray } from '$lib/stores/persisted-store.svelte.js';
 
     // Текущая заметка
     let currentNote = $state(null);
@@ -23,16 +25,19 @@
     // ASR клиент
     let asrClient = $state(null);
 
-    // Инициализация (как в старом варианте)
+    let records = createPersistedArray('voice-notes', []);
+
+    let noteId = $state(null);
+    const unsubscribeNoteId = currentNoteId.subscribe(value => {
+      noteId = value;
+    });
+
+    // let oldsegment = -1
+    let oldtranscript = ''
+    let stopTranscriptProc = false
+    // Инициализация
     onMount(async () => {
         await loadNote();
-
-        // Создаем ASR клиент (как в старом варианте)
-        // asrClient = new SherpaASRClient({
-        //     onTranscript: handleTranscript,
-        //     onStatusChange: handleStatusChange,
-        //     onError: handleError
-        // });
 
         asrClient = new SherpaASRClient();
         asrClient.on('transcript', handleTranscript);
@@ -42,114 +47,125 @@
         console.log('✅ ASR клиент инициализирован с event emitter');
     });
 
-    // Загрузка заметки (как в старом варианте)
+  // Загрузка заметки
     async function loadNote() {
-        const noteId = new URLSearchParams(window.location.search).get('id');
-
-        if (noteId) {
-            try {
-                const response = await fetch(`/api/notes/${noteId}`);
-                if (response.ok) {
-                    currentNote = await response.json();
-                    updateEditor();
-                } else {
-                    console.warn('Заметка не найдена, создаем новую');
-                    currentNote = { id: null, content: '' };
-                }
-            } catch (err) {
-                console.error('Ошибка загрузки заметки:', err);
-                currentNote = { id: null, content: '' };
-            }
+      if (noteId) {
+        const found = records.find(n => n.id === noteId);
+        if (found) {
+          currentNote = found;
+          console.log('📝 Загружена заметка:', found.title);
         } else {
-            currentNote = { id: null, content: '' };
+          noteId = null;
+          currentNote = null;
+          createOrLoadDraft();
         }
+      } else {
+        console.log('📝 createOrLoadDraft records:', records);
+        createOrLoadDraft();
+      }
     }
 
-    // Обработчик транскриптов (старый вариант + новая обработка команд)
-    function handleTranscript(data) {
+    //
+    // если в сегменте есть команда, то вызвать обработчик и ждать сл. сегмента
+    // если нет, добавить сегмент
+    // новый сегмент
+
+    // Обработчик транскриптов
+    async function handleTranscript(data) {
         // console.log('🎯 Обработчик transcript :', data);
-        // Новая логика обработки сегментов
-        if (data.segment !== lastProcessedSegment) {
-            // Обрабатываем предыдущий сегмент (если он был)
-            if (lastProcessedSegment >= 0 && temporaryText.trim()) {
-                handleCompletedSegment(temporaryText);
-            }
+        let cleantext = data.text?.trim() || ''
 
-            // Начинаем новый сегмент
-            lastProcessedSegment = data.segment;
-            temporaryText = data.text;
+        // if (stopTranscriptProc) return
 
-            // Обновляем интерфейс с временным текстом
-            updateEditorWithTemporaryText();
-        } else {
-            // Продолжение текущего сегмента
-            temporaryText = data.text;
-            updateEditorWithTemporaryText();
+        if (!currentNote || !cleantext) {
+            console.log('⏭️ нет заметки или текста');
+            return;
         }
+
+
+        if (lastProcessedSegment == data.segment && oldtranscript == cleantext) {
+            console.log('⏭️ Пропуск: полное повторение');
+            return;
+        }
+
+        let final = lastProcessedSegment == data.segment
+
+        const result = processSegment(cleantext);
+        console.log('🔧 сегмент:', data.segment, final);
+        console.log('🔧 Результат обработки сегмента:', result);
+
+        lastProcessedSegment = data.segment
+        oldtranscript = cleantext
+        temporaryText = cleantext // temporaryText - это обработанный cleantext
+
+        console.log('🎯 temporaryText:', temporaryText);
+
+        // новый сегмент, или в текущем есть system-команда
+        // tmp обработать, добавить в запись, показать новую запись
+        // далее, если тот же сегмент, пропустить?
+        // stopTranscriptProc = true
+        if (final || (result && result.system)) {
+            console.log('________________________________', result)
+            temporaryText = final ? cleantext : cleantext.replace(result.pattern, '').trim();
+            currentNote.content = addTextWithSpace(currentNote.content, temporaryText);
+            temporaryText = ''
+            if (result) console.log('______ACTION', result)
+            if (result) await handleCommandAction(result.name);
+            // updateEditor();
+        } else {
+            // temporaryText = cleantext
+            if (result && result.command) { // а это не system
+                console.log('🎯 команда:', result.command);
+                // обработать команду, т.е. удалить команду и показать
+                temporaryText = cleantext.replace(result.pattern, '').trim();
+            }
+        }
+        updateEditorWithTemporaryText();
     }
 
     /**
-     * Обрабатывает завершенный сегмент (новая логика)
+     * Обрабатывает завершенный сегмент
      */
-    async function handleCompletedSegment(segmentText) {
+    async function handleCompletedSegment(segmentText, result) {
         if (isProcessing) return;
-
         isProcessing = true;
 
         try {
-            const result = processSegment(segmentText);
-            console.log('🔧 Результат обработки сегмента:', result);
-
-            if (result.hasCommand) {
-                const { newContent, action } = executeCommand(
-                    result.command,
-                    result.text,
-                    currentNote?.content || ''
-                );
-
-                if (currentNote) {
-                    currentNote.content = newContent;
-                } else {
-                    currentNote = { id: null, content: newContent };
-                }
-
-                await handleCommandAction(action);
-            } else if (result.text.trim()) {
-                const newText = result.text;
-                if (currentNote) {
-                    currentNote.content = addTextWithSpace(currentNote.content, newText);
-                } else {
-                    currentNote = { id: null, content: newText };
-                }
+            console.log('_kkk')
+            if (result.system) {
+                await handleCommandAction(result.command);
             }
 
             updateEditor();
         } catch (err) {
-            console.error('Ошибка обработки сегмента:', err);
-            updateEditor();
+            console.log('ERR_', err)
         } finally {
             isProcessing = false;
         }
+        updateEditor();
     }
 
     /**
      * Обрабатывает дополнительные действия команд
      */
     async function handleCommandAction(action) {
-        switch (action.type) {
-            case 'save':
-                await saveNote();
-                break;
-            case 'startRecording':
-                if (!isRecording) {
-                    await startRecording();
-                }
-                break;
-            case 'stopRecording':
-                if (isRecording) {
-                    await stopRecording();
-                }
-                break;
+        switch (action) {
+        case 'saveNote':
+            await saveNote();
+            break;
+        case 'cleanNote':
+            await cleanNote();
+            break;
+        case 'startRecording':
+            if (!isRecording) {
+                await startRecording();
+            }
+            break;
+        case 'stopRecord':
+            if (isRecording) {
+                await stopRecording();
+            }
+            break;
         }
     }
 
@@ -174,7 +190,7 @@
         }
     }
 
-    // Обработчики статуса и ошибок (как в старом варианте)
+    // Обработчики статуса и ошибок
     function handleStatusChange(status) {
         console.log('📡 Статус ASR:', status);
         connectionStatus = status;
@@ -196,7 +212,7 @@
     }
 
 
-    // Начало записи (точно как в старом варианте)
+    // Начало записи
     async function startRecording() {
         console.log('_____________________________START')
         if (!asrClient) {
@@ -225,7 +241,7 @@
         }
     }
 
-    // Остановка записи (точно как в старом варианте)
+    // Остановка записи
     async function stopRecording() {
         if (!asrClient || !isRecording) {
             console.log('Запись не активна');
@@ -253,48 +269,36 @@
         }
     }
 
-    // Сохранение заметки (как в старом варианте с небольшими изменениями)
+    // Сохранение заметки
     async function saveNote() {
         if (!currentNote?.content?.trim()) {
-            console.warn('Пустая заметка, не сохраняем');
-            error = 'Заметка пуста';
-            return;
+            console.warn('Пустая заметка, сохраняем');
         }
 
         // Сбрасываем состояния сегментов перед сохранением
         temporaryText = '';
         lastProcessedSegment = -1;
-        updateEditor();
 
-        const method = currentNote.id ? 'PUT' : 'POST';
-        const url = currentNote.id ? `/api/notes/${currentNote.id}` : '/api/notes';
+        currentNote.draft = false
+        currentNote.title = generateTitle(currentNote.content)
+        // const draft = records.find(n => n.id === 'draft_current');
 
-        try {
-            const response = await fetch(url, {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    content: currentNote.content,
-                    title: generateTitle(currentNote.content)
-                })
-            });
 
-            if (response.ok) {
-                const savedNote = await response.json();
-                currentNote.id = savedNote.id;
+        if (currentNote.id == 'draft_current') currentNote.id = crypto.randomUUID()
+        console.log('__________SAVED', currentNote)
 
-                console.log('💾 Заметка сохранена:', savedNote.id);
-                error = null;
+        return
 
-                // Переходим к списку заметок
-                navigateTo.list();
-            } else {
-                throw new Error('Ошибка сохранения');
-            }
-        } catch (err) {
-            console.error('❌ Ошибка сохранения:', err);
-            error = 'Не удалось сохранить заметку';
-        }
+        let key = 'voice-notes'
+        const existingItems = JSON.parse(localStorage.getItem(key)) || [];
+        // 3. Add the new item to the array
+        existingItems.push(currentNote?.content);
+        // 4. & 5. Stringify the updated array and save it back to localStorage
+        localStorage.setItem(key, JSON.stringify(existingItems));
+
+        // updateEditor();
+
+
     }
 
     function generateTitle(content) {
@@ -325,6 +329,15 @@
         editDiv.scrollTop = editDiv.scrollHeight;
     }
 
+    function cleanNote() {
+        if (!editDiv) return;
+        currentNote.content = '';
+        editDiv.textContent = '';
+        if (editDiv.scrollHeight > editDiv.clientHeight) {
+            editDiv.scrollTop = editDiv.scrollHeight;
+        }
+    }
+
     function updateEditor() {
         if (!editDiv) return;
         editDiv.textContent = currentNote?.content || '';
@@ -339,8 +352,9 @@
         }
     }
 
-    // Очистка (как в старом варианте)
+    // Очистка
     onDestroy(() => {
+        unsubscribeNoteId?.();
         if (asrClient) {
             if (isRecording) {
                 asrClient.stop().catch(console.error);
@@ -348,83 +362,31 @@
             asrClient.stop();
         }
     });
+
+    function createOrLoadDraft() {
+      const draft = records.find(n => n.id === 'draft_current');
+      if (draft) {
+        currentNote = draft;
+        console.log('📝 Загружен черновик:', draft.content?.length || 0, 'символов');
+      } else {
+        currentNote = {
+          id: 'draft_current',
+          title: 'Черновик',
+          content: '',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          wordCount: 0,
+          draft: true
+        };
+        records.push(currentNote);
+        console.log('📝 Создан новый черновик');
+      }
+    }
+
+
 </script>
 
 <div class="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-
-    <!-- Заголовок (HTML точно как в старом варианте) -->
-    <!-- <div class="flex items-center justify-between p-4 border-b border-gray-200 bg-gray-50"> -->
-    <!--     <div class="flex items-center space-x-3"> -->
-    <!--         <button -->
-    <!--             on:click={() => navigateTo.list()} -->
-    <!--             class="p-2 hover:bg-gray-100 rounded-lg transition-colors" -->
-    <!--             title="Назад к списку" -->
-    <!--         > -->
-    <!--             <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"> -->
-    <!--                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /> -->
-    <!--             </svg> -->
-    <!--         </button> -->
-
-    <!--         <div> -->
-    <!--             <h1 class="text-lg font-semibold text-gray-800"> -->
-    <!--               {currentNote?.id ? 'Редактирование заметки' : 'Новая заметка'} {currentNote?.id} </h1> -->
-    <!--             <div class="flex items-center space-x-2 mt-1"> -->
-    <!--                 <div class="flex items-center space-x-1"> -->
-    <!--                     <div class={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-green-500' : connectionStatus === 'connecting' ? 'bg-yellow-500' : 'bg-red-500'}`}></div> -->
-    <!--                     <span class="text-xs text-gray-600"> -->
-    <!--                         {connectionStatus === 'connected' ? 'Подключено' : -->
-    <!--                          connectionStatus === 'connecting' ? 'Подключение...' : -->
-    <!--                          'Не подключено'} {connectionStatus} -->
-    <!--                     </span> -->
-    <!--                 </div> -->
-
-    <!--                 {#if isRecording} -->
-    <!--                     <div class="flex items-center space-x-1"> -->
-    <!--                         <div class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div> -->
-    <!--                         <span class="text-xs text-red-600 font-medium">Идет запись</span> -->
-    <!--                     </div> -->
-    <!--                 {/if} -->
-    <!--             </div> -->
-    <!--         </div> -->
-    <!--     </div> -->
-
-    <!--     <\!-- disabled={!asrClient || connectionStatus !== 'connected' || isRecording || isConnecting} -\-> -->
-    <!--     <div class="flex items-center space-x-2"> -->
-    <!--         <button -->
-    <!--             on:click={startRecording} -->
-    <!--             class="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg font-medium hover:bg-blue-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" -->
-    <!--         > -->
-    <!--             {#if isConnecting} -->
-    <!--                 <span class="flex items-center"> -->
-    <!--                     <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"> -->
-    <!--                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" /> -->
-    <!--                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /> -->
-    <!--                     </svg> -->
-    <!--                     Подключение... -->
-    <!--                 </span> -->
-    <!--             {:else} -->
-    <!--               🎤 Начать запись -->
-    <!--             {/if} -->
-    <!--         </button> -->
-
-    <!--         <button -->
-    <!--             on:click={stopRecording} -->
-    <!--             class="px-4 py-2 bg-red-100 text-red-700 rounded-lg font-medium hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" -->
-    <!--             disabled={!isRecording} -->
-    <!--         > -->
-    <!--             ⏹️ Стоп запись -->
-    <!--         </button> -->
-
-    <!--         <button -->
-    <!--             on:click={saveNote} -->
-    <!--             class="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" -->
-    <!--             disabled={!currentNote?.content?.trim()} -->
-    <!--         > -->
-    <!--             💾 Сохранить -->
-    <!--         </button> -->
-    <!--     </div> -->
-    <!-- </div> -->
-
     <!-- Верхняя панель -->
     <div class="flex justify-between sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3">
         <div class="flex items-center gap-3">
@@ -446,15 +408,17 @@
         <div>
             <div class="flex items-center gap-2">
                 <button
-                    on:click={saveNote}
+                    onclick={saveNote}
                     class="p-2 text-green-600 hover:text-green-800 disabled:opacity-30 disabled:cursor-not-allowed"
                     title="Сохранить"
                 >
                     <CheckOutline class="h-6 w-6" />
                 </button>
 
+                {@html icons.delete}
+
                 <button
-                    on:click={toggleRecording}
+                    onclick={toggleRecording}
                     class={`p-2 rounded-full ${isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'}`}
                     title={isRecording ? 'Остановить запись' : 'Начать запись'}
                     disabled={isConnecting}
@@ -472,9 +436,9 @@
             </div>
         </div>
     </div>
-    <!-- ddd -->
 
-    <!-- Сообщения об ошибках (как в старом варианте) -->
+
+    <!-- Сообщения об ошибках  -->
     {#if error}
         <div class="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
             <div class="flex items-start">
@@ -486,12 +450,12 @@
         </div>
     {/if}
 
-    <!-- Редактор (как в старом варианте) -->
+    <!-- Редактор  -->
     <div class="flex-1 p-4 overflow-auto">
         <div
             bind:this={editDiv}
             contenteditable="true"
-            on:input={handleEditorInput}
+            oninput={handleEditorInput}
             class="h-full min-h-[280px] text-gray-800 text-base focus:outline-none whitespace-pre-wrap caret-blue-600"
             placeholder="Говорите - текст будет появляться здесь. Команды: абзац, отменить, сохранить, запись, стоп запись"
         >
@@ -499,7 +463,7 @@
         </div>
     </div>
 
-    <!-- Статус (как в старом варианте + обработка) -->
+    <!-- Статус ( + обработка) -->
     <div class="p-3 border-t border-gray-200 bg-gray-50">
         <div class="flex items-center justify-between">
             <div class="text-xs text-gray-500">
