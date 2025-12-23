@@ -70,7 +70,7 @@ export class SherpaASRClient {
             this.isRecording = true;
             this.emit('status', { recording: true, connected: true });
 
-            console.log('✅ ASR recording started with AudioWorklet');
+            // ++console.log('✅ ASR recording started with AudioWorklet');
 
         } catch (error) {
             console.error('Failed to start ASR:', error);
@@ -114,7 +114,7 @@ export class SherpaASRClient {
             // await this.audioContext.audioWorklet.addModule(new URL('./pcm-processor.js', import.meta.url));
 
             this.workletLoaded = true;
-            console.log('✅ AudioWorklet module loaded');
+            // ++console.log('✅ AudioWorklet module loaded');
         } catch (error) {
             console.error('Failed to load AudioWorklet:', error);
             throw new Error('AudioWorklet not supported or failed to load');
@@ -137,21 +137,21 @@ export class SherpaASRClient {
                 clearTimeout(timeout);
                 this.isConnected = true;
                 this.emit('status', { recording: this.isRecording, connected: true });
-                console.log('✅ Connected to ASR server');
+                // ++console.log('✅ Connected to ASR server');
                 resolve();
             };
 
             this.ws.onmessage = (event) => {
                 // const data = JSON.parse(event.data);
-                // console.log('📝 Данные от сервера:', data);
+                // // ++console.log('📝 Данные от сервера:', data);
                 this.handleServerMessage(event.data);
             };
 
             // this.ws.onmessage = (event) => {
-            //     console.log('📨 WebSocket сообщение получено:', event.data);
+            //     // ++console.log('📨 WebSocket сообщение получено:', event.data);
             //     try {
             //         const data = JSON.parse(event.data);
-            //         console.log('📝 Данные от сервера:', data);
+            //         // ++console.log('📝 Данные от сервера:', data);
             //         if (this.onTranscript) {
             //             this.onTranscript(data);
             //         }
@@ -173,7 +173,7 @@ export class SherpaASRClient {
                 this.emit('status', { recording: this.isRecording, connected: false });
 
                 if (event.code !== 1000 || !this.isShuttingDown) {
-                    console.log(`WebSocket closed: code=${event.code}, reason=${event.reason}`);
+                    // ++console.log(`WebSocket closed: code=${event.code}, reason=${event.reason}`);
                 }
             };
         });
@@ -219,7 +219,7 @@ export class SherpaASRClient {
         // Start sending audio data
         this.startAudioSending();
 
-        console.log('✅ AudioWorklet processing started');
+        // ++console.log('✅ AudioWorklet processing started');
     }
 
     handleAudioData(float32Array) {
@@ -255,7 +255,7 @@ export class SherpaASRClient {
             view.setFloat32(i * 4, float32Array[i], true);
         }
 
-        // console.log('🎵 Отправка аудио данных, размер:', buffer.byteLength);
+        // // ++console.log('🎵 Отправка аудио данных, размер:', buffer.byteLength);
         // Send binary data
         this.ws.send(buffer);
     }
@@ -263,7 +263,7 @@ export class SherpaASRClient {
     handleServerMessage(message) {
         try {
             const data = JSON.parse(message);
-            // console.log('_p', data);
+            // // ++console.log('_p', data);
             if (data.text && data.text.trim()) {
                 // ====================== ME
                 // this.emit('transcript', {
@@ -273,7 +273,7 @@ export class SherpaASRClient {
                 // });
                 this.emit('transcript', data);
 
-                // console.log(`📥 ${data.is_final ? '[FINAL]' : '[PARTIAL]'}: ${data.text}`);
+                // // ++console.log(`📥 ${data.is_final ? '[FINAL]' : '[PARTIAL]'}: ${data.text}`);
             }
         } catch (error) {
             console.warn('Invalid server message:', message);
@@ -325,7 +325,7 @@ export class SherpaASRClient {
         this.audioQueue = [];
 
         this.emit('status', { recording: false, connected: false });
-        console.log('✅ ASR stopped gracefully');
+        // ++console.log('✅ ASR stopped gracefully');
     }
 
     // Utility methods

@@ -8,7 +8,7 @@
     // Используем persisted array для заметок
     let records = createPersistedArray('voice-notes', []);
 
-    console.log('_R', records)
+    $inspect(records)
     // Фильтруем черновики для отображения
     let notes = $derived(
       records

@@ -2,12 +2,20 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
     import { navigateTo, currentNoteId } from '$lib/store.js';
-    import { processSegment, executeCommand } from '$lib/command-processor.js';
+    // import { processSegment, executeCommand } from '$lib/command-processor.js';
+    import { processSegment } from '$lib/command-processor.js';
     import { SherpaASRClient } from '$lib/asr-client.js';
 
     import { icons } from '$lib/images/icons.js';
     import { MicrophoneOutline, CheckOutline } from "flowbite-svelte-icons";
     import { createPersistedArray } from '$lib/stores/persisted-store.svelte.js';
+
+    import Debug from 'debug';
+    const dc = Debug('command');
+    const dapp = Debug('app');
+    const dtr = Debug('transcript');
+
+    dapp('___________________KUKU APP')
 
     // Текущая заметка
     let currentNote = $state(null);
@@ -18,9 +26,16 @@
     let connectionStatus = $state('disconnected');
 
     // Состояния для обработки сегментов
-    let lastProcessedSegment = $state(-1);
+    // let lastProcessedSegment = $state(1);
     let temporaryText = $state('');
     let isProcessing = $state(false);
+    let lastSegment = 1
+    let lastText = ''
+    let lastCommand = ''
+
+    // прошлый сегмент
+    let completedSegment; // = {} //$state({});
+    let completedSegmentAfterCommand;
 
     // ASR клиент
     let asrClient = $state(null);
@@ -32,9 +47,8 @@
       noteId = value;
     });
 
-    // let oldsegment = -1
-    let oldtranscript = ''
-    let stopTranscriptProc = false
+    // let oldtranscript = ''
+    // let stopTranscriptProc = false
     // Инициализация
     onMount(async () => {
         await loadNote();
@@ -44,25 +58,26 @@
         asrClient.on('status', handleStatusChange);
         asrClient.on('error', handleError);
 
-        console.log('✅ ASR клиент инициализирован с event emitter');
+        // ++console.log('✅ ASR клиент инициализирован с event emitter');
     });
 
   // Загрузка заметки
     async function loadNote() {
-      if (noteId) {
-        const found = records.find(n => n.id === noteId);
-        if (found) {
-          currentNote = found;
-          console.log('📝 Загружена заметка:', found.title);
+        if (noteId) {
+            const found = records.find(n => n.id === noteId);
+            if (found) {
+                currentNote = found;
+                // ++console.log('📝 Загружена заметка:', found.title);
+            } else {
+                noteId = null;
+                currentNote = null;
+                createOrLoadDraft();
+            }
         } else {
-          noteId = null;
-          currentNote = null;
-          createOrLoadDraft();
+            // ++console.log('📝 createOrLoadDraft records:');
+            $inspect(records)
+            createOrLoadDraft();
         }
-      } else {
-        console.log('📝 createOrLoadDraft records:', records);
-        createOrLoadDraft();
-      }
     }
 
     //
@@ -72,83 +87,143 @@
 
     // Обработчик транскриптов
     async function handleTranscript(data) {
-        // console.log('🎯 Обработчик transcript :', data);
-        let cleantext = data.text?.trim() || ''
+        // // ++console.log('🎯 Обработчик transcript :', data);
+        dtr('___________________TR DATA', data)
+        dapp('___________________APP DATA', data)
+        let temporaryText = data.text?.trim() || ''
 
-        // if (stopTranscriptProc) return
-
-        if (!currentNote || !cleantext) {
-            console.log('⏭️ нет заметки или текста');
+        if (!currentNote || !temporaryText) {
+            // ++console.log('⏭️ нет заметки или текста');
             return;
         }
 
+        if (!completedSegment) completedSegment = data
 
-        if (lastProcessedSegment == data.segment && oldtranscript == cleantext) {
-            console.log('⏭️ Пропуск: полное повторение');
-            return;
+        if (!completedSegment.text) {
+            // ++console.log('⏭️ повторение команды', completedSegment);
+            // return
         }
 
-        let final = lastProcessedSegment == data.segment
+        // ++console.log('⏭️ STARTcompletedSegment____________:', completedSegment.text, completedSegment.segment);
+        if (data.segment == completedSegment.segment && data.text == completedSegment.text) {
+            // ++console.log('⏭️ Пропуск: полное повторение', data.text, data.segment);
+            return;
+        }
+        console.log('⏭️ START data_______________________:', data);
+        console.log('⏭️ STARTcompletedSegment____________:', completedSegment);
 
-        const result = processSegment(cleantext);
-        console.log('🔧 сегмент:', data.segment, final);
-        console.log('🔧 Результат обработки сегмента:', result);
+        const final = completedSegment.segment != data.segment
+        const command = processSegment(temporaryText);
 
-        lastProcessedSegment = data.segment
-        oldtranscript = cleantext
-        temporaryText = cleantext // temporaryText - это обработанный cleantext
+        // // ++console.log('🔧 lastSegment:', lastSegment);
+        // // ++console.log('🔧 сегмент data:', data, 'final:', final);
+        // // ++console.log('🔧 temporaryText:', temporaryText);
+        // lastSegment = data.segment
+        // lastText = temporaryText
 
-        console.log('🎯 temporaryText:', temporaryText);
+        // ddd
+        if (final) {
+            // // ++console.log('🔧 =========================== final seg:', data);
+            console.log('🔧 === FINAL === completedSegment:', completedSegment);
+            // currentNote.content += completedSegment.text + ' '
+            handleCompletedSegment(completedSegmentAfterCommand)
+            // completedSegment = data
+        // } else {
+            // completedSegment = data
+        }
 
-        // новый сегмент, или в текущем есть system-команда
-        // tmp обработать, добавить в запись, показать новую запись
-        // далее, если тот же сегмент, пропустить?
-        // stopTranscriptProc = true
-        if (final || (result && result.system)) {
-            console.log('________________________________', result)
-            temporaryText = final ? cleantext : cleantext.replace(result.pattern, '').trim();
-            currentNote.content = addTextWithSpace(currentNote.content, temporaryText);
-            temporaryText = ''
-            if (result) console.log('______ACTION', result)
-            if (result) await handleCommandAction(result.name);
-            // updateEditor();
+        completedSegment = {text: data.text, segment: data.segment}
+        completedSegmentAfterCommand = {text: data.text, segment: data.segment}
+        // completedSegment = data
+        if (command) {
+        // if (command && command.name != lastCommand) {
+            console.log('🔧 command:', 1, command.name, 2, lastCommand, data);
+            await handleCommandAction(command.name);
+            lastCommand = command.name // не повторять случайно
+            // console.log('_before:', currentNote.content);
+            // console.log('_before:', data.text);
+            data.text = data.text.replace(command.pattern, '').trim();
+            // console.log('_after:', currentNote.content);
+            console.log('_after:', data.text);
+            // completedSegment = data
+            completedSegmentAfterCommand = data
         } else {
-            // temporaryText = cleantext
-            if (result && result.command) { // а это не system
-                console.log('🎯 команда:', result.command);
-                // обработать команду, т.е. удалить команду и показать
-                temporaryText = cleantext.replace(result.pattern, '').trim();
-            }
+            lastCommand = ''
         }
-        updateEditorWithTemporaryText();
+        // completedSegment = data
+
+        console.log('_update 1:', currentNote.content);
+        console.log('_update 2:', data);
+        console.log('_update 3:', completedSegment);
+        // editDiv.textContent += data.text
+        updateEditorWithTemporaryText(data)
     }
 
     /**
      * Обрабатывает завершенный сегмент
      */
-    async function handleCompletedSegment(segmentText, result) {
+    async function handleCompletedSegment(completedSegment) {
         if (isProcessing) return;
         isProcessing = true;
-
         try {
-            console.log('_kkk')
-            if (result.system) {
-                await handleCommandAction(result.command);
-            }
-
-            updateEditor();
+            // ++console.log('_handleCompletedSegment::::')
+            currentNote.content += completedSegment.text + ' ' // + '<COMPLETED>'
         } catch (err) {
-            console.log('ERR_', err)
+            // ++console.log('ERR_', err)
         } finally {
             isProcessing = false;
         }
-        updateEditor();
+        // ddd
+    }
+
+    function updateEditorWithTemporaryText(data) {
+        if (!editDiv) return;
+
+        const baseText = currentNote?.content || '';
+        let displayText = baseText;
+
+        if (data.text.trim()) {
+            if (baseText && !baseText.endsWith(' ') && !baseText.endsWith('\n')) {
+                displayText += ' ';
+            }
+            displayText += data.text;
+        }
+
+        // ++console.log('_____________________________________displayText', displayText)
+        editDiv.textContent = displayText;
+        editDiv.scrollTop = editDiv.scrollHeight;
+        // placeCaretAtEnd( document.querySelector('p') );
+        placeCaretAtEnd(editDiv);
+    }
+
+    function placeCaretAtEnd(el) {
+        el.focus();
+        if (typeof window.getSelection != "undefined"
+            && typeof document.createRange != "undefined") {
+            var range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+    }
+
+    function updateEditor() {
+        // ++console.log('_updateEditor::::::::::')
+        if (!editDiv) return;
+        editDiv.textContent = currentNote?.content || '';
+        if (editDiv.scrollHeight > editDiv.clientHeight) {
+            editDiv.scrollTop = editDiv.scrollHeight;
+        }
     }
 
     /**
      * Обрабатывает дополнительные действия команд
      */
     async function handleCommandAction(action) {
+        // ++console.log('handleCommandAction', action)
+
         switch (action) {
         case 'saveNote':
             await saveNote();
@@ -156,12 +231,18 @@
         case 'cleanNote':
             await cleanNote();
             break;
-        case 'startRecording':
+        case 'addParagraph':
+            await addParagraph();
+            break;
+        case 'undo':
+            await undoWord();
+            break;
+        case 'recordStart':
             if (!isRecording) {
                 await startRecording();
             }
             break;
-        case 'stopRecord':
+        case 'recordStop':
             if (isRecording) {
                 await stopRecording();
             }
@@ -192,7 +273,7 @@
 
     // Обработчики статуса и ошибок
     function handleStatusChange(status) {
-        console.log('📡 Статус ASR:', status);
+        // ++console.log('📡 Статус ASR:', status);
         connectionStatus = status;
     }
 
@@ -200,7 +281,6 @@
         console.error('❌ Ошибка ASR:', err);
         error = err.message || 'Ошибка подключения к серверу распознавания';
     }
-
 
     // Переключение записи
     async function toggleRecording() {
@@ -214,7 +294,7 @@
 
     // Начало записи
     async function startRecording() {
-        console.log('_____________________________START')
+        // ++console.log('_____________________________START')
         if (!asrClient) {
             error = 'ASR клиент не инициализирован';
             return;
@@ -231,7 +311,7 @@
             await asrClient.start();
             isRecording = true;
             isConnecting = false;
-            console.log('✅ Запись начата');
+            // ++console.log('✅ Запись начата');
 
         } catch (err) {
             console.error('Ошибка запуска записи:', err);
@@ -244,25 +324,28 @@
     // Остановка записи
     async function stopRecording() {
         if (!asrClient || !isRecording) {
-            console.log('Запись не активна');
+            // ++console.log('Запись не активна');
             return;
         }
 
         try {
+            currentNote.content = editDiv.textContent
+
             // Обрабатываем последний сегмент перед остановкой
-            if (temporaryText.trim()) {
-                await handleCompletedSegment(temporaryText);
-            }
+            // if (temporaryText.trim()) {
+            //     await handleCompletedSegment(temporaryText);
+            // }
 
             await asrClient.stop();
             isRecording = false;
-            console.log('⏹️ Запись остановлена');
+            // ++console.log('⏹️ Запись остановлена');
 
             // Сбрасываем состояния сегментов
-            temporaryText = '';
-            lastProcessedSegment = -1;
-            updateEditor();
+            // temporaryText = '';
+            // lastSegment = 1;
+            // updateEditor();
 
+            // ddd
         } catch (err) {
             console.error('Ошибка остановки записи:', err);
             error = err.message || 'Не удалось остановить запись';
@@ -276,29 +359,16 @@
         }
 
         // Сбрасываем состояния сегментов перед сохранением
-        temporaryText = '';
-        lastProcessedSegment = -1;
+        // temporaryText = '';
+        // lastSegment = 1;
 
         currentNote.draft = false
         currentNote.title = generateTitle(currentNote.content)
         // const draft = records.find(n => n.id === 'draft_current');
 
-
         if (currentNote.id == 'draft_current') currentNote.id = crypto.randomUUID()
-        console.log('__________SAVED', currentNote)
-
-        return
-
-        let key = 'voice-notes'
-        const existingItems = JSON.parse(localStorage.getItem(key)) || [];
-        // 3. Add the new item to the array
-        existingItems.push(currentNote?.content);
-        // 4. & 5. Stringify the updated array and save it back to localStorage
-        localStorage.setItem(key, JSON.stringify(existingItems));
-
-        // updateEditor();
-
-
+        // ++console.log('__________SAVED:')
+        // $inspect(currentNote)
     }
 
     function generateTitle(content) {
@@ -312,35 +382,31 @@
         }
     }
 
-    function updateEditorWithTemporaryText() {
-        if (!editDiv) return;
-
-        const baseText = currentNote?.content || '';
-        let displayText = baseText;
-
-        if (temporaryText.trim()) {
-            if (baseText && !baseText.endsWith(' ') && !baseText.endsWith('\n')) {
-                displayText += ' ';
-            }
-            displayText += temporaryText;
-        }
-
-        editDiv.textContent = displayText;
-        editDiv.scrollTop = editDiv.scrollHeight;
-    }
-
     function cleanNote() {
         if (!editDiv) return;
         currentNote.content = '';
-        editDiv.textContent = '';
+        // editDiv.textContent = '';
         if (editDiv.scrollHeight > editDiv.clientHeight) {
             editDiv.scrollTop = editDiv.scrollHeight;
         }
     }
 
-    function updateEditor() {
+    function addParagraph() {
+        // ++console.log('______________________________________________________________adding par')
         if (!editDiv) return;
-        editDiv.textContent = currentNote?.content || '';
+        currentNote.content += '\n';
+        // currentNote.content += 'PAR';
+        // editDiv.textContent = '';
+        if (editDiv.scrollHeight > editDiv.clientHeight) {
+            editDiv.scrollTop = editDiv.scrollHeight;
+        }
+    }
+
+    function undoWord() {
+        if (!editDiv) return;
+        // editDiv.textContent = currentNote?.content.split(' ').slice(0, -1).join(' ')
+        // ++console.log('_undoWord :', editDiv.textContent)
+        // ++console.log('_undoWord  tmp:', temporaryText)
         if (editDiv.scrollHeight > editDiv.clientHeight) {
             editDiv.scrollTop = editDiv.scrollHeight;
         }
@@ -367,7 +433,7 @@
       const draft = records.find(n => n.id === 'draft_current');
       if (draft) {
         currentNote = draft;
-        console.log('📝 Загружен черновик:', draft.content?.length || 0, 'символов');
+        // ++console.log('📝 Загружен черновик:', draft.content?.length || 0, 'символов');
       } else {
         currentNote = {
           id: 'draft_current',
@@ -379,7 +445,7 @@
           draft: true
         };
         records.push(currentNote);
-        console.log('📝 Создан новый черновик');
+        // ++console.log('📝 Создан новый черновик');
       }
     }
 

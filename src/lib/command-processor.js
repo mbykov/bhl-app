@@ -1,48 +1,7 @@
 // $lib/command-processor.js
 
 // Команды с полными фразами
-const COMMANDS = [
-    {
-        name: 'undo',
-        synonyms: ['отмена', 'отменить'],
-        // edit: true,
-        system: false,
-        // pattern: /(отмена|отменить)/i
-    },
-    {
-        name: 'paragraph',
-        synonyms: ['абзац', 'с новой строки', 'новая строка'],
-        // edit: true,
-        system: false,
-        // pattern: /(абзац|с новой строки|новая строка)/i
-    },
-    {
-        name: 'saveNote',
-        synonyms: ['сохранить', 'сохранить запись'],
-        // edit: false,
-        system: true,
-        // pattern: /(сохранить|сохранить заметку)/i
-    },
-    {
-        name: 'cleanNote',
-        synonyms: ['очистить запись', 'заново запись'],
-        system: true,
-    },
-    {
-        name: 'record',
-        synonyms: ['запись', 'начать запись'],
-        // edit: false,
-        system: true,
-        // pattern: /(запись|начать запись)/i
-    },
-    {
-        name: 'stopRecord',
-        synonyms: ['стоп', 'стоп запись'],
-        // edit: false,
-        system: true,
-        // pattern: /(стоп|стоп запись)/i
-    }
-];
+import { COMMANDS } from '$lib/command-list.js';
 
 // Инициализируем паттерны
 COMMANDS.forEach(cmd => {
@@ -52,7 +11,7 @@ COMMANDS.forEach(cmd => {
     cmd.pattern = new RegExp('(' + synonyms + ')', 'i');
 });
 
-console.log('_COMMANDS', COMMANDS)
+// ++console.log('_COMMANDS', COMMANDS)
 
 
 /**
@@ -75,11 +34,13 @@ export function processSegment(text) {
     for (const cmd of COMMANDS) {
         const match = original.match(cmd.pattern);
         if (match) {
-            system = cmd.system
-            foundCommand = cmd.name;
+            // system = cmd.system
+            // foundCommand = cmd.name;
             // Удаляем команду из текста
-            cleanedText = original.replace(cmd.pattern, '').trim();
+            // cleanedText = original.replace(cmd.pattern, '').trim();
             command = cmd
+            command.original = original
+            command.text = original.replace(cmd.pattern, '').trim();
             break;
         }
     }
@@ -101,11 +62,11 @@ export function processSegment(text) {
  * @param {string} currentNoteContent - Текущее содержимое заметки
  * @returns {Object} { newContent: новое содержимое, action: дополнительное действие }
  */
-export function executeCommand(commandName, textBeforeCommand, currentNoteContent = '') {
-    // console.log('🔧 EXECUTE COMMAND вызван:');
-    // console.log('- Команда:', commandName);
-    // console.log('- Текст до команды:', textBeforeCommand);
-    // console.log('- Текущее содержимое заметки:', currentNoteContent);
+export function executeCommand_(commandName, textBeforeCommand, currentNoteContent = '') {
+    // // ++console.log('🔧 EXECUTE COMMAND вызван:');
+    // // ++console.log('- Команда:', commandName);
+    // // ++console.log('- Текст до команды:', textBeforeCommand);
+    // // ++console.log('- Текущее содержимое заметки:', currentNoteContent);
 
     let newContent = currentNoteContent || '';
     const action = { type: 'none' };
