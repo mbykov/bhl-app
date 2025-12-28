@@ -126,10 +126,16 @@
             // // ++console.log('🔧 =========================== final seg:', data);
             console.log('🔧 === FINAL === completedSegment:', completedSegment);
             // currentNote.content += completedSegment.text + ' '
+
+            // ddd
+            let phost = 'http://localhost:8000/punct?q='
+            let pquery = phost + completedSegment.text
+            const presponse = await fetch(pquery);
+            const delimited = await presponse.json();
+            console.log('_PUNCT', delimited)
+            completedSegmentAfterCommand.text = delimited.q
             handleCompletedSegment(completedSegmentAfterCommand)
-            // completedSegment = data
-        // } else {
-            // completedSegment = data
+
         }
 
         completedSegment = {text: data.text, segment: data.segment}
@@ -152,9 +158,9 @@
         }
         // completedSegment = data
 
-        console.log('_update 1:', currentNote.content);
-        console.log('_update 2:', data);
-        console.log('_update 3:', completedSegment);
+        // console.log('_update 1:', currentNote.content);
+        // console.log('_update 2:', data);
+        // console.log('_update 3:', completedSegment);
         // editDiv.textContent += data.text
         updateEditorWithTemporaryText(data)
     }
