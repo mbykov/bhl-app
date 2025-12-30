@@ -88,103 +88,41 @@
     // Обработчик транскриптов
     async function handleTranscript(data) {
         // // ++console.log('🎯 Обработчик transcript :', data);
-        dtr('___________________TR DATA', data)
-        dapp('___________________APP DATA', data)
-        let temporaryText = data.text?.trim() || ''
+        if (!editDiv) return;
+        let current = data.text?.trim() || ''
 
-        if (!currentNote || !temporaryText) {
+        if (!currentNote || !current) {
             // ++console.log('⏭️ нет заметки или текста');
             return;
         }
 
-        if (!completedSegment) completedSegment = data
-
-        if (!completedSegment.text) {
-            // ++console.log('⏭️ повторение команды', completedSegment);
-            // return
-        }
-
-        // ++console.log('⏭️ STARTcompletedSegment____________:', completedSegment.text, completedSegment.segment);
-        if (data.segment == completedSegment.segment && data.text == completedSegment.text) {
-            // ++console.log('⏭️ Пропуск: полное повторение', data.text, data.segment);
-            return;
-        }
         console.log('⏭️ START data_______________________:', data);
-        console.log('⏭️ STARTcompletedSegment____________:', completedSegment);
-
-        const final = completedSegment.segment != data.segment
-        const command = processSegment(temporaryText);
-
-        // // ++console.log('🔧 lastSegment:', lastSegment);
-        // // ++console.log('🔧 сегмент data:', data, 'final:', final);
-        // // ++console.log('🔧 temporaryText:', temporaryText);
-        // lastSegment = data.segment
-        // lastText = temporaryText
-
-        // ddd
-        if (final) {
-            // // ++console.log('🔧 =========================== final seg:', data);
-            console.log('🔧 === FINAL === completedSegment:', completedSegment);
-            // currentNote.content += completedSegment.text + ' '
-
-            // ddd
-            let phost = 'http://localhost:8000/punct?q='
-            let pquery = phost + completedSegment.text
-            const presponse = await fetch(pquery);
-            const delimited = await presponse.json();
-            console.log('_PUNCT', delimited)
-            completedSegmentAfterCommand.text = delimited.q
-            handleCompletedSegment(completedSegmentAfterCommand)
-
-        }
-
-        completedSegment = {text: data.text, segment: data.segment}
-        completedSegmentAfterCommand = {text: data.text, segment: data.segment}
-        // completedSegment = data
-        if (command) {
-        // if (command && command.name != lastCommand) {
-            console.log('🔧 command:', 1, command.name, 2, lastCommand, data);
-            await handleCommandAction(command.name);
-            lastCommand = command.name // не повторять случайно
-            // console.log('_before:', currentNote.content);
-            // console.log('_before:', data.text);
-            data.text = data.text.replace(command.pattern, '').trim();
-            // console.log('_after:', currentNote.content);
-            console.log('_after:', data.text);
-            // completedSegment = data
-            completedSegmentAfterCommand = data
+        if (data.command && data.punct === '') {
+            if (data.command == 'cleanNote') {
+                currentNote.content = ''
+                editDiv.textContent = currentNote.content
+            } else if (data.command == 'addParagraph') {
+                currentNote.content += '\n'
+                editDiv.textContent = currentNote.content
+            }
+        } else if (data.punct) {
+            handleCompletedSegment(data)
         } else {
-            lastCommand = ''
+            updateEditorWithTemporaryText(data)
         }
-        // completedSegment = data
-
-        // console.log('_update 1:', currentNote.content);
-        // console.log('_update 2:', data);
-        // console.log('_update 3:', completedSegment);
-        // editDiv.textContent += data.text
-        updateEditorWithTemporaryText(data)
+        placeCaretAtEnd(editDiv);
     }
 
     /**
      * Обрабатывает завершенный сегмент
      */
-    async function handleCompletedSegment(completedSegment) {
-        if (isProcessing) return;
-        isProcessing = true;
-        try {
-            // ++console.log('_handleCompletedSegment::::')
-            currentNote.content += completedSegment.text + ' ' // + '<COMPLETED>'
-        } catch (err) {
-            // ++console.log('ERR_', err)
-        } finally {
-            isProcessing = false;
-        }
-        // ddd
+    function handleCompletedSegment(completedSegment) {
+        console.log('_handleCompletedSegment::::')
+        currentNote.content += ' ' + completedSegment.punct
+        editDiv.textContent = currentNote.content
     }
 
     function updateEditorWithTemporaryText(data) {
-        if (!editDiv) return;
-
         const baseText = currentNote?.content || '';
         let displayText = baseText;
 
@@ -198,8 +136,6 @@
         // ++console.log('_____________________________________displayText', displayText)
         editDiv.textContent = displayText;
         editDiv.scrollTop = editDiv.scrollHeight;
-        // placeCaretAtEnd( document.querySelector('p') );
-        placeCaretAtEnd(editDiv);
     }
 
     function placeCaretAtEnd(el) {
@@ -339,7 +275,7 @@
 
             // Обрабатываем последний сегмент перед остановкой
             // if (temporaryText.trim()) {
-            //     await handleCompletedSegment(temporaryText);
+            //     await handleCompleted Segment(temporaryText);
             // }
 
             await asrClient.stop();
@@ -350,8 +286,6 @@
             // temporaryText = '';
             // lastSegment = 1;
             // updateEditor();
-
-            // ddd
         } catch (err) {
             console.error('Ошибка остановки записи:', err);
             error = err.message || 'Не удалось остановить запись';
