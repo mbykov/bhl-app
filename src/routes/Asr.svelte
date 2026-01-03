@@ -15,13 +15,14 @@
     const dapp = Debug('app');
     const dtr = Debug('transcript');
 
-    dapp('___________________KUKU APP')
+    const log = console.log
 
     // Текущая заметка
     let currentNote = $state(null);
     let editDiv = $state(null);
     let isRecording = $state(false);
     let isConnecting = $state(false);
+    let isChanged = false
     let error = $state(null);
     let connectionStatus = $state('disconnected');
 
@@ -29,9 +30,8 @@
     // let lastProcessedSegment = $state(1);
     let temporaryText = $state('');
     let isProcessing = $state(false);
-    let lastSegment = 1
-    let lastText = ''
     let lastCommand = ''
+    let commandDiv
 
     // прошлый сегмент
     let completedSegment; // = {} //$state({});
@@ -47,21 +47,22 @@
       noteId = value;
     });
 
-    // let oldtranscript = ''
-    // let stopTranscriptProc = false
     // Инициализация
     onMount(async () => {
         await loadNote();
-
         asrClient = new SherpaASRClient();
         asrClient.on('transcript', handleTranscript);
         asrClient.on('status', handleStatusChange);
         asrClient.on('error', handleError);
-
-        // ++console.log('✅ ASR клиент инициализирован с event emitter');
+        asrClient.on('vumeter', handleVuMeter);
+        commandDiv = document.getElementById('commandDiv');
     });
 
-  // Загрузка заметки
+    async function handleVuMeter(vudata) {
+        log('_VuData', vudata)
+    }
+
+    // Загрузка заметки
     async function loadNote() {
         if (noteId) {
             const found = records.find(n => n.id === noteId);
@@ -74,37 +75,69 @@
                 createOrLoadDraft();
             }
         } else {
-            // ++console.log('📝 createOrLoadDraft records:');
-            $inspect(records)
+            // $inspect(records)
             createOrLoadDraft();
         }
     }
 
-    //
-    // если в сегменте есть команда, то вызвать обработчик и ждать сл. сегмента
-    // если нет, добавить сегмент
-    // новый сегмент
+    async function handleCommand(data) {
+        switch (data.command) {
+        case 'saveNote':
+            await saveNote();
+            break;
+        case 'cleanNote': // удали текст
+            currentNote.content = ''
+            // editDiv.textContent = currentNote.content
+            break;
+        case 'addParagraph': // новый абзац, новая строка
+            currentNote.content += '\n\n'
+            // editDiv.textContent = currentNote.content
+            break;
+        case 'undo':
+            await undoWord();
+            break;
+        case 'recordStart':
+            if (!isRecording) {
+                await startRecording();
+            }
+            break;
+        case 'recordStop': // стоп запись
+            log('_STOP', currentNote)
+            editDiv.textContent = currentNote.content // повторение, потому что запись блокируется
+            if (isRecording) {
+                await stopRecording();
+            }
+            break;
+        case 'recordNew': // стоп запись + goto List + title
+            editDiv.textContent = currentNote.content
+            if (isRecording) {
+                await stopRecording();
+            }
+            currentNote.title = generateTitle(currentNote.content)
+            navigateTo.list()
+            break;
+        }
+
+        editDiv.textContent = currentNote.content
+        toggleCommandDiv(data.command)
+    }
+
+    async function toggleCommandDiv(command) {
+        commandDiv.textContent = command
+        commandDiv.classList.remove('hidden');
+        setTimeout(() => {
+            commandDiv.classList.add('hidden');
+        }, 3000);
+    }
 
     // Обработчик транскриптов
     async function handleTranscript(data) {
-        // // ++console.log('🎯 Обработчик transcript :', data);
         if (!editDiv) return;
-        let current = data.text?.trim() || ''
+        // console.log('⏭️ handleTranscript_______________________:', data);
 
-        if (!currentNote || !current) {
-            // ++console.log('⏭️ нет заметки или текста');
-            return;
-        }
-
-        console.log('⏭️ START data_______________________:', data);
         if (data.command && data.punct === '') {
-            if (data.command == 'cleanNote') {
-                currentNote.content = ''
-                editDiv.textContent = currentNote.content
-            } else if (data.command == 'addParagraph') {
-                currentNote.content += '\n'
-                editDiv.textContent = currentNote.content
-            }
+            console.log('⏭️ START data_______________________:', data);
+            handleCommand(data)
         } else if (data.punct) {
             handleCompletedSegment(data)
         } else {
@@ -117,7 +150,7 @@
      * Обрабатывает завершенный сегмент
      */
     function handleCompletedSegment(completedSegment) {
-        console.log('_handleCompletedSegment::::')
+        // console.log('_handleCompletedSegment::::')
         currentNote.content += ' ' + completedSegment.punct
         editDiv.textContent = currentNote.content
     }
@@ -133,7 +166,7 @@
             displayText += data.text;
         }
 
-        // ++console.log('_____________________________________displayText', displayText)
+        // console.log('_____________________________________displayText', displayText)
         editDiv.textContent = displayText;
         editDiv.scrollTop = editDiv.scrollHeight;
     }
@@ -151,67 +184,35 @@
         }
     }
 
-    function updateEditor() {
-        // ++console.log('_updateEditor::::::::::')
-        if (!editDiv) return;
-        editDiv.textContent = currentNote?.content || '';
-        if (editDiv.scrollHeight > editDiv.clientHeight) {
-            editDiv.scrollTop = editDiv.scrollHeight;
-        }
-    }
-
-    /**
-     * Обрабатывает дополнительные действия команд
-     */
-    async function handleCommandAction(action) {
-        // ++console.log('handleCommandAction', action)
-
-        switch (action) {
-        case 'saveNote':
-            await saveNote();
-            break;
-        case 'cleanNote':
-            await cleanNote();
-            break;
-        case 'addParagraph':
-            await addParagraph();
-            break;
-        case 'undo':
-            await undoWord();
-            break;
-        case 'recordStart':
-            if (!isRecording) {
-                await startRecording();
-            }
-            break;
-        case 'recordStop':
-            if (isRecording) {
-                await stopRecording();
-            }
-            break;
-        }
-    }
+    // function updateEditor_() {
+    //     console.log('_updateEditor::::::::::')
+    //     if (!editDiv) return;
+    //     editDiv.textContent = currentNote?.content || '';
+    //     if (editDiv.scrollHeight > editDiv.clientHeight) {
+    //         editDiv.scrollTop = editDiv.scrollHeight;
+    //     }
+    // }
 
     /**
      * Добавляет текст с правильным пробелом
      */
-    function addTextWithSpace(existingText, textToAdd) {
-        if (!textToAdd) return existingText;
-        if (!existingText) return textToAdd;
+    // function addTextWithSpace(existingText, textToAdd) {
+    //     if (!textToAdd) return existingText;
+    //     if (!existingText) return textToAdd;
 
-        if (textToAdd === '\n\n') {
-            return existingText + textToAdd;
-        }
+    //     if (textToAdd === '\n\n') {
+    //         return existingText + textToAdd;
+    //     }
 
-        const lastChar = existingText[existingText.length - 1];
-        const firstChar = textToAdd[0];
+    //     const lastChar = existingText[existingText.length - 1];
+    //     const firstChar = textToAdd[0];
 
-        if (lastChar === ' ' || lastChar === '\n' || firstChar === ' ' || firstChar === '\n') {
-            return existingText + textToAdd;
-        } else {
-            return existingText + ' ' + textToAdd;
-        }
-    }
+    //     if (lastChar === ' ' || lastChar === '\n' || firstChar === ' ' || firstChar === '\n') {
+    //         return existingText + textToAdd;
+    //     } else {
+    //         return existingText + ' ' + textToAdd;
+    //     }
+    // }
 
     // Обработчики статуса и ошибок
     function handleStatusChange(status) {
@@ -266,26 +267,15 @@
     // Остановка записи
     async function stopRecording() {
         if (!asrClient || !isRecording) {
-            // ++console.log('Запись не активна');
+            console.log('Запись не активна');
             return;
         }
-
         try {
-            currentNote.content = editDiv.textContent
-
-            // Обрабатываем последний сегмент перед остановкой
-            // if (temporaryText.trim()) {
-            //     await handleCompleted Segment(temporaryText);
-            // }
-
+            // currentNote.content = editDiv.textContent
+            // editDiv.textContent = currentNote.content
             await asrClient.stop();
             isRecording = false;
-            // ++console.log('⏹️ Запись остановлена');
-
-            // Сбрасываем состояния сегментов
-            // temporaryText = '';
-            // lastSegment = 1;
-            // updateEditor();
+            console.log('⏹️ Запись остановлена');
         } catch (err) {
             console.error('Ошибка остановки записи:', err);
             error = err.message || 'Не удалось остановить запись';
@@ -294,21 +284,21 @@
 
     // Сохранение заметки
     async function saveNote() {
-        if (!currentNote?.content?.trim()) {
-            console.warn('Пустая заметка, сохраняем');
+        // if (!currentNote?.content?.trim()) {
+        //     console.warn('Пустая заметка, сохраняем');
+        // }
+
+        if (isChanged) {
+            currentNote.content = editDiv.textContent;
+            isChanged = false
         }
-
-        // Сбрасываем состояния сегментов перед сохранением
-        // temporaryText = '';
-        // lastSegment = 1;
-
+        // editDiv.textContent = currentNote.content
         currentNote.draft = false
         currentNote.title = generateTitle(currentNote.content)
         // const draft = records.find(n => n.id === 'draft_current');
 
         if (currentNote.id == 'draft_current') currentNote.id = crypto.randomUUID()
-        // ++console.log('__________SAVED:')
-        // $inspect(currentNote)
+        toggleCommandDiv('saveNote')
     }
 
     function generateTitle(content) {
@@ -322,40 +312,20 @@
         }
     }
 
-    function cleanNote() {
-        if (!editDiv) return;
-        currentNote.content = '';
-        // editDiv.textContent = '';
-        if (editDiv.scrollHeight > editDiv.clientHeight) {
-            editDiv.scrollTop = editDiv.scrollHeight;
-        }
-    }
-
-    function addParagraph() {
-        // ++console.log('______________________________________________________________adding par')
-        if (!editDiv) return;
-        currentNote.content += '\n';
-        // currentNote.content += 'PAR';
-        // editDiv.textContent = '';
-        if (editDiv.scrollHeight > editDiv.clientHeight) {
-            editDiv.scrollTop = editDiv.scrollHeight;
-        }
-    }
-
     function undoWord() {
         if (!editDiv) return;
         // editDiv.textContent = currentNote?.content.split(' ').slice(0, -1).join(' ')
         // ++console.log('_undoWord :', editDiv.textContent)
-        // ++console.log('_undoWord  tmp:', temporaryText)
         if (editDiv.scrollHeight > editDiv.clientHeight) {
             editDiv.scrollTop = editDiv.scrollHeight;
         }
     }
 
     function handleEditorInput() {
-        if (editDiv) {
-            currentNote.content = editDiv.textContent;
-        }
+        if (!editDiv) return;
+        isChanged = true
+        // return
+        // currentNote.content = editDiv.textContent;
     }
 
     // Очистка
@@ -392,6 +362,10 @@
 
 </script>
 
+<div id="commandDiv" class="hidden absolute top-16 left-0 h-8 w-64 bg-green-100 z-100 p-1 px-4 mx-4 border shadow-md rounded-md">
+    команда: <span id="commandName"></span>
+</div>
+
 <div class="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
     <!-- Верхняя панель -->
     <div class="flex justify-between sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3">
@@ -411,13 +385,13 @@
             </div>
         </div>
 
-        <div>
+        <!-- <div> -->
             <div class="flex items-center gap-2">
                 <button
                     onclick={saveNote}
                     class="p-2 text-green-600 hover:text-green-800 disabled:opacity-30 disabled:cursor-not-allowed"
                     title="Сохранить"
-                >
+                    >
                     <CheckOutline class="h-6 w-6" />
                 </button>
 
@@ -441,7 +415,7 @@
                 </button>
             </div>
         </div>
-    </div>
+    <!-- </div> -->
 
 
     <!-- Сообщения об ошибках  -->
@@ -460,8 +434,9 @@
     <div class="flex-1 p-4 overflow-auto">
         <div
             bind:this={editDiv}
-            contenteditable="true"
             oninput={handleEditorInput}
+            onchange={handleEditorInput}
+            contenteditable="true"
             class="h-full min-h-[280px] text-gray-800 text-base focus:outline-none whitespace-pre-wrap caret-blue-600"
             placeholder="Говорите - текст будет появляться здесь. Команды: абзац, отменить, сохранить, запись, стоп запись"
         >

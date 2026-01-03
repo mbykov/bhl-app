@@ -112,6 +112,7 @@ export class SherpaASRClient {
             await this.audioContext.audioWorklet.addModule('/pcm-processor.js');
             // Option 2: If using Vite, you might need to import it
             // await this.audioContext.audioWorklet.addModule(new URL('./pcm-processor.js', import.meta.url));
+            await this.audioContext.audioWorklet.addModule('/vumeter-processor.js');
 
             this.workletLoaded = true;
             // ++console.log('✅ AudioWorklet module loaded');
@@ -198,6 +199,8 @@ export class SherpaASRClient {
             }
         });
 
+        this.meterNode = new AudioWorkletNode(this.audioContext, 'vumeter')
+
         // Configure the processor
         this.workletNode.port.postMessage({
             command: 'config',
@@ -212,9 +215,28 @@ export class SherpaASRClient {
             }
         };
 
+        // Handle meter data from worklet
+        this.meterNode.port.onmessage = (event) => {
+            if (event.data.type === 'audio') {
+                let _volume = 0
+                let _sensibility = 5 // Just to add any sensibility to our ecuation
+                if (event.data.volume)
+                    _volume = event.data.volume;
+                let vudata = (_volume * 100) / _sensibility
+                console.log('__________________VD', vudata)
+                this.emit('vumeter', vudata);
+                // leds((_volume * 100) / _sensibility)
+            }
+        };
+
+
         // Connect audio nodes: source → worklet → destination
         source.connect(this.workletNode);
         this.workletNode.connect(this.audioContext.destination);
+
+        // mmm
+        source.connect(this.meterNode);
+        this.meterNode.connect(this.audioContext.destination);
 
         // Start sending audio data
         this.startAudioSending();
