@@ -15,27 +15,31 @@
     const dapp = Debug('app');
     const dtr = Debug('transcript');
 
+    import Meter from './Meter.svelte'
+    let meterComponent;
+
     const log = console.log
 
     // Текущая заметка
     let currentNote = $state(null);
     let editDiv = $state(null);
     let isRecording = $state(false);
+    let isWriting = $state(true);
     let isConnecting = $state(false);
     let isChanged = false
     let error = $state(null);
     let connectionStatus = $state('disconnected');
 
     // Состояния для обработки сегментов
-    // let lastProcessedSegment = $state(1);
+    let lastProcessedSegment = '' // $state(1);
     let temporaryText = $state('');
     let isProcessing = $state(false);
     let lastCommand = ''
     let commandDiv
 
     // прошлый сегмент
-    let completedSegment; // = {} //$state({});
-    let completedSegmentAfterCommand;
+    // let completedSegment; // = {} //$state({});
+    // let completedSegmentAfterCommand;
 
     // ASR клиент
     let asrClient = $state(null);
@@ -56,10 +60,11 @@
         asrClient.on('error', handleError);
         asrClient.on('vumeter', handleVuMeter);
         commandDiv = document.getElementById('commandDiv');
+        await startRecording();
     });
 
     async function handleVuMeter(vudata) {
-        log('_VuData', vudata)
+        if (meterComponent) meterComponent.showLeds(vudata)
     }
 
     // Загрузка заметки
@@ -87,43 +92,47 @@
             break;
         case 'cleanNote': // удали текст
             currentNote.content = ''
-            // editDiv.textContent = currentNote.content
             break;
         case 'addParagraph': // новый абзац, новая строка
             currentNote.content += '\n\n'
-            // editDiv.textContent = currentNote.content
             break;
-        case 'undo':
-            await undoWord();
+        case 'undoWord':
+            let relast = new RegExp(lastProcessedSegment + '$')
+            currentNote.content = currentNote.content.replace(relast, '')
             break;
-        case 'recordStart':
+        case 'recordStart': // начать запись
             if (!isRecording) {
                 await startRecording();
             }
+            log('_______REC START')
+            isWriting = true
             break;
         case 'recordStop': // стоп запись
-            log('_STOP', currentNote)
+            // log('_command STOP', currentNote)
             editDiv.textContent = currentNote.content // повторение, потому что запись блокируется
-            if (isRecording) {
-                await stopRecording();
-            }
+            // if (isRecording) {
+            //     await stopRecording();
+            // }
+            isWriting = false
             break;
         case 'recordNew': // стоп запись + goto List + title
             editDiv.textContent = currentNote.content
             if (isRecording) {
                 await stopRecording();
             }
+            isWriting = false
             currentNote.title = generateTitle(currentNote.content)
             navigateTo.list()
             break;
         }
 
-        editDiv.textContent = currentNote.content
+        editDiv.textContent = currentNote.content.trim()
         toggleCommandDiv(data.command)
     }
 
     async function toggleCommandDiv(command) {
-        commandDiv.textContent = command
+        let cname = document.querySelector('#commandName')
+        cname.textContent = command
         commandDiv.classList.remove('hidden');
         setTimeout(() => {
             commandDiv.classList.add('hidden');
@@ -133,11 +142,15 @@
     // Обработчик транскриптов
     async function handleTranscript(data) {
         if (!editDiv) return;
-        // console.log('⏭️ handleTranscript_______________________:', data);
+
+        if (data.command == 'recordStart' && data.punct === '') isWriting = true
+        if (!isWriting) return;
 
         if (data.command && data.punct === '') {
-            console.log('⏭️ START data_______________________:', data);
+            console.log('⏭️ command START data_______________________:', data);
             handleCommand(data)
+        } else if (data.command && !data.punct) {
+            log('______пропуск перед командой', data.text)
         } else if (data.punct) {
             handleCompletedSegment(data)
         } else {
@@ -149,10 +162,12 @@
     /**
      * Обрабатывает завершенный сегмент
      */
-    function handleCompletedSegment(completedSegment) {
+    function handleCompletedSegment(data) {
         // console.log('_handleCompletedSegment::::')
-        currentNote.content += ' ' + completedSegment.punct
-        editDiv.textContent = currentNote.content
+        lastProcessedSegment = data.punct
+        currentNote.content += ' ' + data.punct
+        currentNote.content = currentNote.content.trim()
+        editDiv.textContent = currentNote.content.trim()
     }
 
     function updateEditorWithTemporaryText(data) {
@@ -184,36 +199,6 @@
         }
     }
 
-    // function updateEditor_() {
-    //     console.log('_updateEditor::::::::::')
-    //     if (!editDiv) return;
-    //     editDiv.textContent = currentNote?.content || '';
-    //     if (editDiv.scrollHeight > editDiv.clientHeight) {
-    //         editDiv.scrollTop = editDiv.scrollHeight;
-    //     }
-    // }
-
-    /**
-     * Добавляет текст с правильным пробелом
-     */
-    // function addTextWithSpace(existingText, textToAdd) {
-    //     if (!textToAdd) return existingText;
-    //     if (!existingText) return textToAdd;
-
-    //     if (textToAdd === '\n\n') {
-    //         return existingText + textToAdd;
-    //     }
-
-    //     const lastChar = existingText[existingText.length - 1];
-    //     const firstChar = textToAdd[0];
-
-    //     if (lastChar === ' ' || lastChar === '\n' || firstChar === ' ' || firstChar === '\n') {
-    //         return existingText + textToAdd;
-    //     } else {
-    //         return existingText + ' ' + textToAdd;
-    //     }
-    // }
-
     // Обработчики статуса и ошибок
     function handleStatusChange(status) {
         // ++console.log('📡 Статус ASR:', status);
@@ -226,12 +211,17 @@
     }
 
     // Переключение записи
-    async function toggleRecording() {
-      if (isRecording) {
-        await stopRecording();
-      } else {
-        await startRecording();
-      }
+    // async function toggleRecording() {
+    //   if (isRecording) {
+    //     await stopRecording();
+    //   } else {
+    //     await startRecording();
+    //   }
+    // }
+
+    async function toggleWriting() {
+        isWriting = !isWriting
+        // if (!isWriting) isConnecting = true
     }
 
 
@@ -250,12 +240,11 @@
             if (!asrClient.isSupported()) {
                 throw new Error('Браузер не поддерживает запись аудио');
             }
-
             await asrClient.start();
             isRecording = true;
             isConnecting = false;
-            // ++console.log('✅ Запись начата');
-
+            isWriting = true;
+            // console.log('✅ Запись начата');
         } catch (err) {
             console.error('Ошибка запуска записи:', err);
             error = err.message || 'Не удалось начать запись';
@@ -275,7 +264,7 @@
             // editDiv.textContent = currentNote.content
             await asrClient.stop();
             isRecording = false;
-            console.log('⏹️ Запись остановлена');
+            // console.log('⏹️ Запись остановлена');
         } catch (err) {
             console.error('Ошибка остановки записи:', err);
             error = err.message || 'Не удалось остановить запись';
@@ -289,7 +278,7 @@
         // }
 
         if (isChanged) {
-            currentNote.content = editDiv.textContent;
+            currentNote.content = editDiv.textContent.trim();
             isChanged = false
         }
         // editDiv.textContent = currentNote.content
@@ -312,20 +301,9 @@
         }
     }
 
-    function undoWord() {
-        if (!editDiv) return;
-        // editDiv.textContent = currentNote?.content.split(' ').slice(0, -1).join(' ')
-        // ++console.log('_undoWord :', editDiv.textContent)
-        if (editDiv.scrollHeight > editDiv.clientHeight) {
-            editDiv.scrollTop = editDiv.scrollHeight;
-        }
-    }
-
     function handleEditorInput() {
         if (!editDiv) return;
         isChanged = true
-        // return
-        // currentNote.content = editDiv.textContent;
     }
 
     // Очистка
@@ -362,28 +340,29 @@
 
 </script>
 
-<div id="commandDiv" class="hidden absolute top-16 left-0 h-8 w-64 bg-green-100 z-100 p-1 px-4 mx-4 border shadow-md rounded-md">
+<div id="commandDiv" class="hidden absolute top-30 right-0 h-8 w-64 bg-green-100 z-100 p-1 px-4 mx-4 border shadow-md rounded-md">
     команда: <span id="commandName"></span>
 </div>
 
 <div class="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
     <!-- Верхняя панель -->
-    <div class="flex justify-between sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3">
-        <div class="flex items-center gap-3">
-            <!-- Индикатор статуса -->
-            <div class={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : connectionStatus === 'connected' ? 'bg-green-500' : 'bg-gray-400'}`}
-                 title="{isRecording ? 'Идет запись' : connectionStatus === 'connected' ? 'Подключено' : 'Отключено'}">
-            </div>
-            <div class="text-sm text-gray-600">
-                {#if isRecording}
-                    <span class="text-red-600 font-medium">Идет запись</span>
-                {:else if isConnecting}
-                    <span class="text-yellow-600 font-medium">Подключение...</span>
-                {:else}
-                    <span>Готов к записи</span>
-                {/if}
-            </div>
-        </div>
+    <div class="flex justify-between sticky top-0 z-10 bg-white border-b border-gray-200 px-3 py-3">
+        <!-- <div class="flex items-center gap-3"> -->
+            <!-- Индикатор -->
+            <!-- <div class={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : connectionStatus === 'connected' ? 'bg-green-500' : 'bg-gray-400'}`} -->
+                 <!-- title="{isRecording ? 'Идет запись' : connectionStatus === 'connected' ? 'Подключено' : 'Отключено'}"> -->
+            <!-- </div> -->
+            <!-- <div class="text-sm text-gray-600"> -->
+            <!--     {#if isRecording} -->
+            <!--         <span class="text-red-600 font-medium">Идет запись</span> -->
+            <!--     {:else if isConnecting} -->
+            <!--         <span class="text-yellow-600 font-medium">Подключение...</span> -->
+            <!--     {:else} -->
+            <!--         <span>Готов к записи</span> -->
+            <!--     {/if} -->
+            <!-- </div> -->
+        <!-- </div> -->
+        <Meter bind:this={meterComponent} class=""/>
 
         <!-- <div> -->
             <div class="flex items-center gap-2">
@@ -397,15 +376,16 @@
 
                 {@html icons.delete}
 
+                <!-- toggleRecording -->
                 <button
-                    onclick={toggleRecording}
-                    class={`p-2 rounded-full ${isRecording ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'}`}
+                    onclick={toggleWriting}
+                    class={`p-2 rounded-full ${isWriting ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'}`}
                     title={isRecording ? 'Остановить запись' : 'Начать запись'}
                     disabled={isConnecting}
                 >
                     {#if isConnecting}
                         <div class="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-                    {:else if isRecording}
+                    {:else if isWriting}
                         <div class="h-6 w-6 flex items-center justify-center">
                             <div class="h-3 w-3 bg-red-600 rounded-sm"></div>
                         </div>

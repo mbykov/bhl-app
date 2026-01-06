@@ -124,7 +124,8 @@ export class SherpaASRClient {
 
     async connectWebSocket() {
         return new Promise((resolve, reject) => {
-            const url = 'ws://localhost:6006';
+            // const url = 'ws://localhost:6006';
+            const url = 'wss://localhost:6006';
             this.ws = new WebSocket(url);
             this.ws.binaryType = 'arraybuffer';
 
@@ -199,6 +200,7 @@ export class SherpaASRClient {
             }
         });
 
+        // mmm
         this.meterNode = new AudioWorkletNode(this.audioContext, 'vumeter')
 
         // Configure the processor
@@ -215,18 +217,19 @@ export class SherpaASRClient {
             }
         };
 
-        // Handle meter data from worklet
+
+        // Handle meter data from worklet mmm
         this.meterNode.port.onmessage = (event) => {
-            if (event.data.type === 'audio') {
+            // if (event.data.type === 'audio') {
                 let _volume = 0
-                let _sensibility = 5 // Just to add any sensibility to our ecuation
+                let _sensibility = 1 // Just to add any sensibility to our ecuation
                 if (event.data.volume)
                     _volume = event.data.volume;
-                let vudata = (_volume * 100) / _sensibility
-                console.log('__________________VD', vudata)
+                let vudata = (_volume * 1000) / _sensibility
+                // console.log('____________vm.port.onmessage:', vudata)
                 this.emit('vumeter', vudata);
                 // leds((_volume * 100) / _sensibility)
-            }
+            // }
         };
 
 

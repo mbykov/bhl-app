@@ -30,7 +30,7 @@ registerProcessor('vumeter', class extends AudioWorkletProcessor {
     process (inputs, outputs, parameters) {
         const input = inputs[0];
 
-        console.log('__________________VD input', input)
+        // console.log('__________________VD input', input)
         // Note that the input will be down-mixed to mono; however, if no inputs are
         // connected then zero channels will be passed in.
         if (input.length > 0) {
@@ -46,7 +46,7 @@ registerProcessor('vumeter', class extends AudioWorkletProcessor {
             rms = Math.sqrt(sum / samples.length);
             this._volume = Math.max(rms, this._volume * SMOOTHING_FACTOR);
 
-            console.log('__________________VD', this._volume)
+            // console.log('__________vm sending', this._volume)
             // Update and sync the volume property with the main thread.
             this._nextUpdateFrame -= samples.length;
             if (this._nextUpdateFrame < 0) {
