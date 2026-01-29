@@ -1,7 +1,7 @@
 <!-- src/routes/Settings.svelte -->
 <script>
     import { navigateTo } from '$lib/store.js';
-    import { backIcon } from '$lib/images/icons.js';
+    // import { backIcon } from '$lib/images/icons.js';
 </script>
 
 <div class="min-h-screen bg-gray-50">
@@ -12,8 +12,9 @@
                 on:click={navigateTo.list}
                 class="p-2 text-gray-600 hover:text-gray-900 mr-3"
                 title="Назад"
-            >
-                {@html backIcon}
+              >
+              backIcon
+                <!-- {@html backIcon} -->
             </button>
             <h1 class="text-xl font-semibold text-gray-900">Настройки</h1>
         </div>
