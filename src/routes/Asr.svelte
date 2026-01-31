@@ -22,6 +22,9 @@
 
     // Текущая заметка
     let currentNote = $state(null);
+    let currentNoteN = $state([]);
+    let currentPar = $state(null);
+
     let editDiv = $state(null);
     let isRecording = $state(false);
     let isWriting = $state(true);
@@ -37,9 +40,8 @@
     let lastCommand = ''
     let commandDiv
 
-    // прошлый сегмент
-    // let completedSegment; // = {} //$state({});
-    // let completedSegmentAfterCommand;
+    let oredactor
+    let ocurpar
 
     // ASR клиент
     let asrClient = $state(null);
@@ -53,6 +55,8 @@
 
     // Инициализация
     onMount(async () => {
+        oredactor = document.querySelector('#redactor');
+        ocurpar = oredactor.lastElementChild
         await loadNote();
         asrClient = new SherpaASRClient();
         asrClient.on('transcript', handleTranscript);
@@ -78,6 +82,7 @@
                 noteId = null;
                 currentNote = null;
                 createOrLoadDraft();
+                // непонятно. Если есть noteId, но запись не найдена, то это ошибка должна быть
             }
         } else {
             // $inspect(records)
@@ -90,11 +95,19 @@
         case 'saveNote':
             await saveNote();
             break;
+        case 'getTime':
+            log('_getTime', data)
+            editDiv.textContent += ' kuku'
+            break;
         case 'cleanNote': // удали текст
             currentNote.content = ''
+            editDiv.textContent = ''
+
+            cleanCurrentNote()
             break;
         case 'addParagraph': // новый абзац, новая строка
             currentNote.content += '\n\n'
+            createNewParagraph()
             break;
         case 'undoWord':
             let relast = new RegExp(lastProcessedSegment + '$')
@@ -126,7 +139,7 @@
             break;
         }
 
-        editDiv.textContent = currentNote.content.trim()
+        // editDiv.textContent = currentNote.content.trim()
         toggleCommandDiv(data.command)
     }
 
@@ -142,32 +155,62 @@
     // Обработчик транскриптов
     async function handleTranscript(data) {
         if (!editDiv) return;
+        const now = new Date()
+        let localTime = now.toLocaleString('ru-RU')
+        // console.log('⏭️ START data_______________________:', localTime, data);
 
-        if (data.command == 'recordStart' && data.punct === '') isWriting = true
+        if (!ocurpar) createNewParagraph()
+
+        if (data.command == 'recordStart' && data.text === '') isWriting = true
         if (!isWriting) return;
 
-        if (data.command && data.punct === '') {
-            console.log('⏭️ command START data_______________________:', data);
+        if (data.command) {
+            log('__handleCommand_', data)
             handleCommand(data)
-        } else if (data.command && !data.punct) {
-            log('______пропуск перед командой', data.text)
-        } else if (data.punct) {
+        } else if (data.type == 'final') {
             handleCompletedSegment(data)
-        } else {
+        } else if (data.type == 'intermediate') {
+            // console.log('⏭ tmp_____:', data);
             updateEditorWithTemporaryText(data)
         }
         placeCaretAtEnd(editDiv);
+    }
+
+    // mmm
+    function createNewParagraph() {
+        currentPar = ''
+        let otmpl = document.querySelector('#par-template');
+        ocurpar = otmpl.cloneNode()
+        ocurpar.id = ''
+        ocurpar.classList.remove('hidden')
+        ocurpar.textContent = currentPar
+        oredactor.appendChild(ocurpar)
+    }
+
+    function cleanCurrentNote() {
+        currentNote.content = ''
+        currentNoteN.content = []
+        oredactor.replaceChildren();
+        createNewParagraph()
     }
 
     /**
      * Обрабатывает завершенный сегмент
      */
     function handleCompletedSegment(data) {
-        // console.log('_handleCompletedSegment::::')
-        lastProcessedSegment = data.punct
-        currentNote.content += ' ' + data.punct
+        data.text = data.text.trim()
+        //
+        lastProcessedSegment = data.text
+        currentNote.content += ' ' + data.text
         currentNote.content = currentNote.content.trim()
         editDiv.textContent = currentNote.content.trim()
+        // mmm
+        // log('_final dtata', data.text)
+        if (!currentPar) currentPar = ''
+        let space = currentPar ? ' ' : ''
+        currentPar += space + data.text
+        log('_currentPar.content_2', currentPar.content)
+        ocurpar.textContent = currentPar
     }
 
     function updateEditorWithTemporaryText(data) {
@@ -184,6 +227,15 @@
         // console.log('_____________________________________displayText', displayText)
         editDiv.textContent = displayText;
         editDiv.scrollTop = editDiv.scrollHeight;
+
+        if (ocurpar && data.type == 'intermediate') { // *почему может не быть ocurpar ??*
+            // log('_+interm', data.text)
+
+            if (!currentPar) currentPar = ''
+            let space = currentPar ? ' ' : ''
+            ocurpar.textContent = currentPar + space + data.text
+            oredactor.scrollTop = oredactor.scrollHeight;
+        }
     }
 
     function placeCaretAtEnd(el) {
@@ -347,71 +399,57 @@
 <div class="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
     <!-- Верхняя панель -->
     <div class="flex justify-between sticky top-0 z-10 bg-white border-b border-gray-200 px-3 py-3">
-        <!-- <div class="flex items-center gap-3"> -->
-            <!-- Индикатор -->
-            <!-- <div class={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : connectionStatus === 'connected' ? 'bg-green-500' : 'bg-gray-400'}`} -->
-                 <!-- title="{isRecording ? 'Идет запись' : connectionStatus === 'connected' ? 'Подключено' : 'Отключено'}"> -->
-            <!-- </div> -->
-            <!-- <div class="text-sm text-gray-600"> -->
-            <!--     {#if isRecording} -->
-            <!--         <span class="text-red-600 font-medium">Идет запись</span> -->
-            <!--     {:else if isConnecting} -->
-            <!--         <span class="text-yellow-600 font-medium">Подключение...</span> -->
-            <!--     {:else} -->
-            <!--         <span>Готов к записи</span> -->
-            <!--     {/if} -->
-            <!-- </div> -->
-        <!-- </div> -->
         <Meter bind:this={meterComponent} class=""/>
 
-        <!-- <div> -->
-            <div class="flex items-center gap-2">
-                <button
-                    onclick={saveNote}
-                    class="p-2 text-green-600 hover:text-green-800 disabled:opacity-30 disabled:cursor-not-allowed"
-                    title="Сохранить"
-                    >
-                    <CheckOutline class="h-6 w-6" />
-                </button>
+        <div class="flex items-center gap-2">
+          <button
+            onclick={saveNote}
+            class="p-2 text-green-600 hover:text-green-800 disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Сохранить"
+            >
+            <CheckOutline class="h-6 w-6" />
+          </button>
 
-                {@html icons.delete}
+          {@html icons.delete}
 
-                <!-- toggleRecording -->
-                <button
-                    onclick={toggleWriting}
-                    class={`p-2 rounded-full ${isWriting ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'}`}
-                    title={isRecording ? 'Остановить запись' : 'Начать запись'}
-                    disabled={isConnecting}
-                >
-                    {#if isConnecting}
-                        <div class="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-                    {:else if isWriting}
-                        <div class="h-6 w-6 flex items-center justify-center">
-                            <div class="h-3 w-3 bg-red-600 rounded-sm"></div>
-                        </div>
-                    {:else}
-                        <MicrophoneOutline class="h-6 w-6" />
-                    {/if}
-                </button>
-            </div>
+          <!-- toggleRecording -->
+          <button
+            onclick={toggleWriting}
+            class={`p-2 rounded-full ${isWriting ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'}`}
+            title={isRecording ? 'Остановить запись' : 'Начать запись'}
+            disabled={isConnecting}
+            >
+            {#if isConnecting}
+              <div class="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+            {:else if isWriting}
+              <div class="h-6 w-6 flex items-center justify-center">
+                <div class="h-3 w-3 bg-red-600 rounded-sm"></div>
+              </div>
+            {:else}
+              <MicrophoneOutline class="h-6 w-6" />
+            {/if}
+          </button>
         </div>
-    <!-- </div> -->
-
+    </div>
 
     <!-- Сообщения об ошибках  -->
     {#if error}
-        <div class="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-            <div class="flex items-start">
+      <div class="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+        <div class="flex items-start">
                 <svg class="w-5 h-5 text-red-500 mt-0.5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span class="text-red-700 text-sm">{error}</span>
             </div>
         </div>
-    {/if}
+      {/if}
 
-    <!-- Редактор  -->
-    <div class="flex-1 p-4 overflow-auto">
+      <!-- Редактор  -->
+      <div id="redactor" class="flex-1 p-4_ overflow-auto border">
+      </div>
+      <div id="par-template" class="px-4 pt-2 hidden"></div>
+
+      <div class="flex-1 p-4 overflow-auto border hidden_">
         <div
             bind:this={editDiv}
             oninput={handleEditorInput}
@@ -425,31 +463,32 @@
     </div>
 
     <!-- Статус ( + обработка) -->
-    <div class="p-3 border-t border-gray-200 bg-gray-50">
-        <div class="flex items-center justify-between">
-            <div class="text-xs text-gray-500">
-                {#if isProcessing}
-                    <span class="flex items-center">
-                        <svg class="animate-spin h-3 w-3 mr-2 text-blue-500" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Обработка...
-                    </span>
-                {:else if temporaryText}
-                    <span>Распознается: "{temporaryText}"</span>
-                {:else if connectionStatus === 'connected'}
-                    <span>Готов к записи</span>
-                {:else}
-                    <span>Ожидание подключения...</span>
-                {/if}
-            </div>
-
-            <div class="text-xs text-gray-500">
-                {currentNote?.content?.length || 0} знаков
-            </div>
+    <div class="p-3 border-t border-gray-200 bg-gray-50">-------------------------------
+      <div class="flex items-center justify-between">
+        <div class="text-xs text-gray-500">
+          {#if isProcessing}
+            <span class="flex items-center">
+              <svg class="animate-spin h-3 w-3 mr-2 text-blue-500" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Обработка...
+            </span>
+          {:else if temporaryText}
+            <span>Распознается: "{temporaryText}"</span>
+          {:else if connectionStatus === 'connected'}
+            <span>Готов к записи</span>
+          {:else}
+            <span>Ожидание подключения...</span>
+          {/if}
         </div>
+
+        <div class="text-xs text-gray-500">
+          {currentNote?.content?.length || 0} знаков
+        </div>
+      </div>
     </div>
+
 </div>
 
 <style>
