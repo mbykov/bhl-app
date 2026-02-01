@@ -10,6 +10,8 @@
     import { MicrophoneOutline, CheckOutline } from "flowbite-svelte-icons";
     import { createPersistedArray } from '$lib/stores/persisted-store.svelte.js';
 
+    import { svgtest } from '$lib/svg-text.js'
+
     import Debug from 'debug';
     const dc = Debug('command');
     const dapp = Debug('app');
@@ -22,10 +24,10 @@
 
     // Текущая заметка
     let currentNote = $state(null);
-    let currentNoteN = $state([]);
+    let currentNoteN = $state(null); // ccc
     let currentPar = $state(null);
 
-    let editDiv = $state(null);
+    // let editDiv = $state(null);
     let isRecording = $state(false);
     let isWriting = $state(true);
     let isConnecting = $state(false);
@@ -43,6 +45,9 @@
     let oredactor
     let ocurpar
 
+
+
+
     // ASR клиент
     let asrClient = $state(null);
 
@@ -55,8 +60,10 @@
 
     // Инициализация
     onMount(async () => {
+        log('____ON MOUNT')
         oredactor = document.querySelector('#redactor');
         ocurpar = oredactor.lastElementChild
+        // здесь плохо. BAD
         await loadNote();
         asrClient = new SherpaASRClient();
         asrClient.on('transcript', handleTranscript);
@@ -66,6 +73,7 @@
         commandDiv = document.getElementById('commandDiv');
         await startRecording();
     });
+    // ccc
 
     async function handleVuMeter(vudata) {
         if (meterComponent) meterComponent.showLeds(vudata)
@@ -73,20 +81,22 @@
 
     // Загрузка заметки
     async function loadNote() {
+        log('______loadNote START noteId', noteId)
         if (noteId) {
             const found = records.find(n => n.id === noteId);
             if (found) {
-                currentNote = found;
-                // ++console.log('📝 Загружена заметка:', found.title);
+                currentNoteN = found;
+                console.log('📝 Загружена заметка:', found.title);
             } else {
                 noteId = null;
-                currentNote = null;
-                createOrLoadDraft();
+                currentNoteN = null;
+                await createOrLoadDraft();
+                console.log('📝 LOAD создана новая заметка:', found.title);
                 // непонятно. Если есть noteId, но запись не найдена, то это ошибка должна быть
             }
         } else {
             // $inspect(records)
-            createOrLoadDraft();
+            await createOrLoadDraft();
         }
     }
 
@@ -97,21 +107,21 @@
             break;
         case 'getTime':
             log('_getTime', data)
-            editDiv.textContent += ' kuku'
+            // editDiv.textContent += ' kuku'
             break;
         case 'cleanNote': // удали текст
-            currentNote.content = ''
-            editDiv.textContent = ''
+            // currentNote.content = ''
+            // editDiv.textContent = ''
 
-            cleanCurrentNote()
+            await cleanCurrentNote()
             break;
         case 'addParagraph': // новый абзац, новая строка
-            currentNote.content += '\n\n'
-            createNewParagraph()
+            // currentNote.content += '\n\n'
+            await createNewParagraph()
             break;
         case 'undoWord':
             let relast = new RegExp(lastProcessedSegment + '$')
-            currentNote.content = currentNote.content.replace(relast, '')
+            // currentNote.content = currentNote.content.replace(relast, '')
             break;
         case 'recordStart': // начать запись
             if (!isRecording) {
@@ -122,19 +132,19 @@
             break;
         case 'recordStop': // стоп запись
             // log('_command STOP', currentNote)
-            editDiv.textContent = currentNote.content // повторение, потому что запись блокируется
+            // editDiv.textContent = currentNote.content // повторение, потому что запись блокируется
             // if (isRecording) {
             //     await stopRecording();
             // }
             isWriting = false
             break;
         case 'recordNew': // стоп запись + goto List + title
-            editDiv.textContent = currentNote.content
+            // editDiv.textContent = currentNote.content
             if (isRecording) {
                 await stopRecording();
             }
             isWriting = false
-            currentNote.title = generateTitle(currentNote.content)
+            currentNoteN.title = generateTitle(currentNoteN.content)
             navigateTo.list()
             break;
         }
@@ -154,12 +164,10 @@
 
     // Обработчик транскриптов
     async function handleTranscript(data) {
-        if (!editDiv) return;
+        // if (!editDiv) return;
         const now = new Date()
         let localTime = now.toLocaleString('ru-RU')
         // console.log('⏭️ START data_______________________:', localTime, data);
-
-        if (!ocurpar) createNewParagraph()
 
         if (data.command == 'recordStart' && data.text === '') isWriting = true
         if (!isWriting) return;
@@ -173,25 +181,13 @@
             // console.log('⏭ tmp_____:', data);
             updateEditorWithTemporaryText(data)
         }
-        placeCaretAtEnd(editDiv);
     }
 
-    // mmm
-    function createNewParagraph() {
-        currentPar = ''
-        let otmpl = document.querySelector('#par-template');
-        ocurpar = otmpl.cloneNode()
-        ocurpar.id = ''
-        ocurpar.classList.remove('hidden')
-        ocurpar.textContent = currentPar
-        oredactor.appendChild(ocurpar)
-    }
-
-    function cleanCurrentNote() {
-        currentNote.content = ''
-        currentNoteN.content = []
+    async function cleanCurrentNote() {
+        // currentNote.content = ''
+        currentNoteN.content = [] // ccc
         oredactor.replaceChildren();
-        createNewParagraph()
+        await createNewParagraph()
     }
 
     /**
@@ -199,11 +195,9 @@
      */
     function handleCompletedSegment(data) {
         data.text = data.text.trim()
-        //
-        lastProcessedSegment = data.text
-        currentNote.content += ' ' + data.text
-        currentNote.content = currentNote.content.trim()
-        editDiv.textContent = currentNote.content.trim()
+        // currentNote.content += ' ' + data.text
+        // currentNote.content = currentNote.content.trim()
+        // editDiv.textContent = currentNote.content.trim()
         // mmm
         // log('_final dtata', data.text)
         if (!currentPar) currentPar = ''
@@ -211,43 +205,32 @@
         currentPar += space + data.text
         log('_currentPar.content_2', currentPar.content)
         ocurpar.textContent = currentPar
+        lastProcessedSegment = data.text
+        placeCaretAtEnd(ocurpar)
     }
 
     function updateEditorWithTemporaryText(data) {
-        const baseText = currentNote?.content || '';
-        let displayText = baseText;
+        // const baseText = currentNote?.content || '';
+        // let displayText = baseText;
 
-        if (data.text.trim()) {
-            if (baseText && !baseText.endsWith(' ') && !baseText.endsWith('\n')) {
-                displayText += ' ';
-            }
-            displayText += data.text;
-        }
+        // if (data.text.trim()) {
+        //     if (baseText && !baseText.endsWith(' ') && !baseText.endsWith('\n')) {
+        //         displayText += ' ';
+        //     }
+        //     displayText += data.text;
+        // }
 
         // console.log('_____________________________________displayText', displayText)
-        editDiv.textContent = displayText;
-        editDiv.scrollTop = editDiv.scrollHeight;
+        // editDiv.textContent = displayText;
+        // editDiv.scrollTop = editDiv.scrollHeight;
 
-        if (ocurpar && data.type == 'intermediate') { // *почему может не быть ocurpar ??*
+        if (data.type == 'intermediate') { // *почему может не быть ocurpar ??*
             // log('_+interm', data.text)
-
             if (!currentPar) currentPar = ''
             let space = currentPar ? ' ' : ''
             ocurpar.textContent = currentPar + space + data.text
             oredactor.scrollTop = oredactor.scrollHeight;
-        }
-    }
-
-    function placeCaretAtEnd(el) {
-        el.focus();
-        if (typeof window.getSelection != "undefined"
-            && typeof document.createRange != "undefined") {
-            var range = document.createRange();
-            range.selectNodeContents(el);
-            range.collapse(false);
-            var sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
+            placeCaretAtEnd(ocurpar)
         }
     }
 
@@ -330,21 +313,23 @@
         // }
 
         if (isChanged) {
-            currentNote.content = editDiv.textContent.trim();
+            // currentNote.content = editDiv.textContent.trim();
             isChanged = false
         }
         // editDiv.textContent = currentNote.content
-        currentNote.draft = false
-        currentNote.title = generateTitle(currentNote.content)
+        currentNoteN.draft = false
+        currentNoteN.title = generateTitle()
         // const draft = records.find(n => n.id === 'draft_current');
 
+        log('_saved note', currentNoteN)
         if (currentNote.id == 'draft_current') currentNote.id = crypto.randomUUID()
         toggleCommandDiv('saveNote')
     }
 
-    function generateTitle(content) {
-        if (!content) return 'Новая заметка';
-        const firstLine = content.split('\n')[0];
+    function generateTitle() {
+        let firstPar = currentNoteN.content[0]
+        if (!firstPar) return 'Новая заметка';
+        const firstLine = firstPar.split('\n')[0];
         const words = firstLine.split(' ');
         if (words.length <= 5) {
             return firstLine.slice(0, 50);
@@ -354,7 +339,7 @@
     }
 
     function handleEditorInput() {
-        if (!editDiv) return;
+        // if (!editDiv) return;
         isChanged = true
     }
 
@@ -369,26 +354,82 @@
         }
     });
 
-    function createOrLoadDraft() {
-      const draft = records.find(n => n.id === 'draft_current');
-      if (draft) {
-        currentNote = draft;
-        // ++console.log('📝 Загружен черновик:', draft.content?.length || 0, 'символов');
-      } else {
-        currentNote = {
-          id: 'draft_current',
-          title: 'Черновик',
-          content: '',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          wordCount: 0,
-          draft: true
-        };
-        records.push(currentNote);
-        // ++console.log('📝 Создан новый черновик');
-      }
+    async function createOrLoadDraft() {
+        const draft = records.find(n => n.id === 'draft_current');
+        if (draft) {
+            currentNoteN = draft;
+            log('📝 Загружен draft черновик id:', draft.id);
+            currentPar = currentNoteN.content[currentNoteN.content.length -1] || ''
+            log('_draft cur par', currentPar)
+            log('_draft currentNoteN', currentNoteN)
+            log('_draft currentNoteN.content', currentNoteN.content)
+        } else {
+            currentNoteN = {
+                id: 'draft_current',
+                title: 'Черновик',
+                // content: '', была строка, теперь абзацы
+                content: [],
+                createdAt: new Date(),
+                updatedAt: new Date(),
+                wordCount: 0,
+                draft: true
+            };
+            currentPar = ''
+            currentNoteN.content.push(currentPar)
+            records.push(currentNote);
+            console.log('📝 Создан новый черновик');
+        }
+        await showNoteParagraphs()
     }
 
+    async function showNoteParagraphs() {
+        let otmpl = document.querySelector('#par-template');
+        currentNoteN.content.forEach((text, idx)=> {
+            log('_________________ER TEXT', idx, text)
+            if (!text) return
+            let onewpar = otmpl.cloneNode()
+            onewpar.id = 'id_' + idx
+            onewpar.classList.remove('hidden')
+            onewpar.textContent = text
+            oredactor.appendChild(onewpar)
+        })
+        ocurpar = oredactor.lastElementChild
+        if (!ocurpar) {
+            ocurpar = await createNewParagraph()
+            log('_______________E ocurpar', ocurpar)
+            oredactor.appendChild(ocurpar)
+        }
+        placeCaretAtEnd(ocurpar);
+        log('_______________ERR', ocurpar)
+        // ccc
+    }
+
+    // ccc
+    async function createNewParagraph() {
+        currentPar = ''
+        let otmpl = document.querySelector('#par-template');
+        let onewpar = otmpl.cloneNode()
+        onewpar.id = ''
+        onewpar.classList.remove('hidden')
+        onewpar.textContent = currentPar
+        oredactor.appendChild(onewpar)
+        currentNoteN.content.push(currentPar)
+        log('_создан новый абзац createNewParagraph')
+        return onewpar
+    }
+
+    function placeCaretAtEnd(el) {
+        el.focus();
+        if (typeof window.getSelection != "undefined"
+            && typeof document.createRange != "undefined") {
+            var range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+    }
 
 </script>
 
@@ -447,55 +488,55 @@
       <!-- Редактор  -->
       <div id="redactor" class="flex-1 p-4_ overflow-auto border">
       </div>
-      <div id="par-template" class="px-4 pt-2 hidden"></div>
+      <div id="par-template" class="px-4 pt-2 hidden" contenteditable="true"></div>
 
-      <div class="flex-1 p-4 overflow-auto border hidden_">
-        <div
-            bind:this={editDiv}
-            oninput={handleEditorInput}
-            onchange={handleEditorInput}
-            contenteditable="true"
-            class="h-full min-h-[280px] text-gray-800 text-base focus:outline-none whitespace-pre-wrap caret-blue-600"
-            placeholder="Говорите - текст будет появляться здесь. Команды: абзац, отменить, сохранить, запись, стоп запись"
-        >
-            {currentNote?.content || ''}
-        </div>
-    </div>
+      <!-- <div class="flex-1 p-4 overflow-auto border hidden"> -->
+      <!--     <div -->
+      <!--         bind:this={editDiv} -->
+      <!--         oninput={handleEditorInput} -->
+      <!--         onchange={handleEditorInput} -->
+      <!--         contenteditable="true" -->
+      <!--         class="h-full min-h-[280px] text-gray-800 text-base focus:outline-none whitespace-pre-wrap caret-blue-600" -->
+      <!--         placeholder="Говорите - текст будет появляться здесь. Команды: абзац, отменить, сохранить, запись, стоп запись" -->
+      <!--         > -->
+      <!--         {currentNote?.content || ''} -->
+      <!--     </div> -->
+      <!-- </div> -->
 
-    <!-- Статус ( + обработка) -->
-    <div class="p-3 border-t border-gray-200 bg-gray-50">-------------------------------
-      <div class="flex items-center justify-between">
-        <div class="text-xs text-gray-500">
-          {#if isProcessing}
-            <span class="flex items-center">
-              <svg class="animate-spin h-3 w-3 mr-2 text-blue-500" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              Обработка...
-            </span>
-          {:else if temporaryText}
-            <span>Распознается: "{temporaryText}"</span>
-          {:else if connectionStatus === 'connected'}
-            <span>Готов к записи</span>
-          {:else}
-            <span>Ожидание подключения...</span>
-          {/if}
-        </div>
+      <!-- Статус ( + обработка) ???? todo ???-->
+      <div class="p-3 border-t border-gray-200 bg-gray-50">-------------------------------
+          <div class="flex items-center justify-between">
+              <div class="text-xs text-gray-500">
+                  {#if isProcessing}
+                    <span class="flex items-center">
+                        <svg class="animate-spin h-3 w-3 mr-2 text-blue-500" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Обработка...
+                    </span>
+                  {:else if temporaryText}
+                    <span>Распознается: "{temporaryText}"</span>
+                  {:else if connectionStatus === 'connected'}
+                    <span>Готов к записи</span>
+                  {:else}
+                    <span>Ожидание подключения...</span>
+                  {/if}
+                </div>
 
-        <div class="text-xs text-gray-500">
-          {currentNote?.content?.length || 0} знаков
-        </div>
+              <div class="text-xs text-gray-500">
+                  {currentNote?.content?.length || 0} знаков
+              </div>
+          </div>
       </div>
-    </div>
 
 </div>
 
 <style>
     [contenteditable="true"]:empty:before {
-        content: attr(placeholder);
-        color: #9ca3af;
-        pointer-events: none;
+      content: attr(placeholder);
+      color: #9ca3af;
+      pointer-events: none;
     }
 
     [contenteditable="true"]:focus {
