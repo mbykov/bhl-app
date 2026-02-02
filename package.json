@@ -28,6 +28,10 @@
 	"dependencies": {
 		"debug": "^4.4.3",
 		"fs-extra": "^11.3.3",
-		"lodash": "^4.17.23"
+		"katex": "^0.16.28",
+		"lodash": "^4.17.23",
+		"mathjax": "^3.2.2",
+		"mathjax-full": "^3.2.1",
+		"texsvg": "^3.0.0"
 	}
 }

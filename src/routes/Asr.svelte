@@ -481,8 +481,8 @@
            oninput={handleEditorInput}
            onchange={handleEditorInput}
            >
-
       </div>
+
       <div id="par-template" class="px-4 pt-2 hidden" contenteditable="true"></div>
 
       <!-- Статус ( + обработка) ???? todo ???-->
