@@ -1,5 +1,5 @@
-<!-- src/routes/Asr.svelte -->
 <script>
+    import _ from "lodash"
     import { onMount, onDestroy } from 'svelte';
     import { navigateTo, currentNoteId } from '$lib/store.js';
     // import { processSegment, executeCommand } from '$lib/command-processor.js';
@@ -24,10 +24,8 @@
 
     // Текущая заметка
     let currentNote = $state(null);
-    let currentNoteN = $state(null); // ccc
-    let currentPar = $state(null);
+    let currentPar = $state({ text: '', id: 0 });
 
-    // let editDiv = $state(null);
     let isRecording = $state(false);
     let isWriting = $state(true);
     let isConnecting = $state(false);
@@ -37,6 +35,7 @@
 
     // Состояния для обработки сегментов
     let lastProcessedSegment = '' // $state(1);
+    let segments = []
     let temporaryText = $state('');
     let isProcessing = $state(false);
     let lastCommand = ''
@@ -44,9 +43,6 @@
 
     let oredactor
     let ocurpar
-
-
-
 
     // ASR клиент
     let asrClient = $state(null);
@@ -60,9 +56,9 @@
 
     // Инициализация
     onMount(async () => {
-        log('____ON MOUNT')
+        // log('____ON MOUNT')
         oredactor = document.querySelector('#redactor');
-        ocurpar = oredactor.lastElementChild
+        // ocurpar = oredactor.lastElementChild
         // здесь плохо. BAD
         await loadNote();
         asrClient = new SherpaASRClient();
@@ -80,24 +76,33 @@
     }
 
     // Загрузка заметки
+    // xxx
     async function loadNote() {
-        log('______loadNote START noteId', noteId)
+        // log('______loadNote START noteId', noteId)
         if (noteId) {
             const found = records.find(n => n.id === noteId);
             if (found) {
-                currentNoteN = found;
-                console.log('📝 Загружена заметка:', found.title);
+                currentNote = found;
+                // currentNote.content = [] // DDD delete
+                // log('_:::loadNote:::', $state.snapshot(currentNote.content));
+                // console.log('📝 Загружена заметка:', found.title);
             } else {
                 noteId = null;
-                currentNoteN = null;
+                currentNote = null;
                 await createOrLoadDraft();
-                console.log('📝 LOAD создана новая заметка:', found.title);
+                // console.log('📝 LOAD создана новая заметка:', found.title);
                 // непонятно. Если есть noteId, но запись не найдена, то это ошибка должна быть
             }
         } else {
             // $inspect(records)
             await createOrLoadDraft();
         }
+        // log('_:::before err:::', $state.snapshot(currentNote));
+
+        currentPar = currentNote.content[currentNote.content.length -1] || ''
+        await showNoteParagraphs()
+        ocurpar = oredactor.lastElementChild
+        placeCaretAtEnd(ocurpar);
     }
 
     async function handleCommand(data) {
@@ -107,49 +112,37 @@
             break;
         case 'getTime':
             log('_getTime', data)
-            // editDiv.textContent += ' kuku'
             break;
-        case 'cleanNote': // удали текст
-            // currentNote.content = ''
-            // editDiv.textContent = ''
-
-            await cleanCurrentNote()
+        case 'clearNote': // удали текст
+            await clearCurrentNote()
             break;
         case 'addParagraph': // новый абзац, новая строка
-            // currentNote.content += '\n\n'
-            await createNewParagraph()
+            ocurpar.textContent = currentPar.text // killmiddle
+            ocurpar = await createNewParagraph()
+            showCurrentParagraph(ocurpar)
             break;
-        case 'undoWord':
-            let relast = new RegExp(lastProcessedSegment + '$')
-            // currentNote.content = currentNote.content.replace(relast, '')
+        case 'undo':
+            undoSegment()
             break;
         case 'recordStart': // начать запись
-            if (!isRecording) {
-                await startRecording();
-            }
-            log('_______REC START')
+            ocurpar.textContent = currentPar.text // killmiddle
             isWriting = true
             break;
         case 'recordStop': // стоп запись
-            // log('_command STOP', currentNote)
-            // editDiv.textContent = currentNote.content // повторение, потому что запись блокируется
-            // if (isRecording) {
-            //     await stopRecording();
-            // }
+            ocurpar.textContent = currentPar.text // killmiddle
             isWriting = false
             break;
         case 'recordNew': // стоп запись + goto List + title
-            // editDiv.textContent = currentNote.content
             if (isRecording) {
                 await stopRecording();
             }
             isWriting = false
-            currentNoteN.title = generateTitle(currentNoteN.content)
+            currentNote.title = generateTitle(currentNote.content)
             navigateTo.list()
             break;
         }
 
-        // editDiv.textContent = currentNote.content.trim()
+        placeCaretAtEnd(ocurpar)
         toggleCommandDiv(data.command)
     }
 
@@ -164,16 +157,15 @@
 
     // Обработчик транскриптов
     async function handleTranscript(data) {
-        // if (!editDiv) return;
         const now = new Date()
         let localTime = now.toLocaleString('ru-RU')
-        // console.log('⏭️ START data_______________________:', localTime, data);
+        // console.log('⏭️ START data command_______________________:', localTime, data.text );
 
-        if (data.command == 'recordStart' && data.text === '') isWriting = true
+        if (data.command == 'recordStart') isWriting = true
         if (!isWriting) return;
 
         if (data.command) {
-            log('__handleCommand_', data)
+            // log('__handleCommand_', data)
             handleCommand(data)
         } else if (data.type == 'final') {
             handleCompletedSegment(data)
@@ -183,11 +175,32 @@
         }
     }
 
-    async function cleanCurrentNote() {
-        // currentNote.content = ''
-        currentNoteN.content = [] // ccc
+    function undoSegment() {
+        ocurpar.textContent = currentPar.text // killmiddle
+        log('_отменить::: LAST', currentPar.text)
+        let last = segments.pop()
+        log('_отменить::: LAST', segments)
+        // let relast = new RegExp(lastProcessedSegment + '$')
+        let relast = new RegExp(last + '$')
+        // currentPar.text = currentPar.text.trim().replace(relast, '')
+        currentPar.text = segments.join(' ')
+        ocurpar.textContent = currentPar.text // undo
+    }
+
+    function handleEditorInput(ev) {
+        isChanged = true
+        currentPar.text = ev.target.textContent.trim()
+        log('_INPUT currentPar', currentPar.text)
+        // lastProcessedSegment = currentPar.text // todo: тут не ясно - отменяется весь абзац
+        segments = currentPar.text.match(/[^.!?]+[.!?]?/g).map(s => s.trim());
+        log('_INPUT currentPar segments', segments)
+    }
+
+    async function clearCurrentNote() {
+        currentNote.content = [] // ccc
         oredactor.replaceChildren();
-        await createNewParagraph()
+        ocurpar = await createNewParagraph()
+        showCurrentParagraph(ocurpar)
     }
 
     /**
@@ -195,40 +208,23 @@
      */
     function handleCompletedSegment(data) {
         data.text = data.text.trim()
-        // currentNote.content += ' ' + data.text
-        // currentNote.content = currentNote.content.trim()
-        // editDiv.textContent = currentNote.content.trim()
-        // mmm
-        // log('_final dtata', data.text)
-        if (!currentPar) currentPar = ''
-        let space = currentPar ? ' ' : ''
-        currentPar += space + data.text
-        log('_currentPar.content_2', currentPar.content)
-        ocurpar.textContent = currentPar
+        segments.push(data.text)
+        // let space = currentPar.text ? ' ' : ''
+        // currentPar.text += space + data.text
+        currentPar.text = segments.join(' ')
+
+        // log('_:::handleCompletedSegment currentPar.text:::', currentPar.text);
+        // log('_:::handleCompletedSegment:::', $state.snapshot(currentNote.content));
+        ocurpar.textContent = currentPar.text
         lastProcessedSegment = data.text
+        // log('_:::handleCompletedSegment lastProcessedSegment:::', lastProcessedSegment);
         placeCaretAtEnd(ocurpar)
     }
 
     function updateEditorWithTemporaryText(data) {
-        // const baseText = currentNote?.content || '';
-        // let displayText = baseText;
-
-        // if (data.text.trim()) {
-        //     if (baseText && !baseText.endsWith(' ') && !baseText.endsWith('\n')) {
-        //         displayText += ' ';
-        //     }
-        //     displayText += data.text;
-        // }
-
-        // console.log('_____________________________________displayText', displayText)
-        // editDiv.textContent = displayText;
-        // editDiv.scrollTop = editDiv.scrollHeight;
-
-        if (data.type == 'intermediate') { // *почему может не быть ocurpar ??*
-            // log('_+interm', data.text)
-            if (!currentPar) currentPar = ''
-            let space = currentPar ? ' ' : ''
-            ocurpar.textContent = currentPar + space + data.text
+        if (data.type == 'intermediate') {
+            let space = currentPar.text ? ' ' : '' // начало
+            ocurpar.textContent = currentPar.text + space + data.text
             oredactor.scrollTop = oredactor.scrollHeight;
             placeCaretAtEnd(ocurpar)
         }
@@ -290,13 +286,13 @@
 
     // Остановка записи
     async function stopRecording() {
+        log('________________stop', currentPar.text)
+        ocurpar.textContent = currentPar.text // killmiddle
         if (!asrClient || !isRecording) {
             console.log('Запись не активна');
             return;
         }
         try {
-            // currentNote.content = editDiv.textContent
-            // editDiv.textContent = currentNote.content
             await asrClient.stop();
             isRecording = false;
             // console.log('⏹️ Запись остановлена');
@@ -308,39 +304,32 @@
 
     // Сохранение заметки
     async function saveNote() {
-        // if (!currentNote?.content?.trim()) {
-        //     console.warn('Пустая заметка, сохраняем');
-        // }
-
         if (isChanged) {
-            // currentNote.content = editDiv.textContent.trim();
             isChanged = false
         }
-        // editDiv.textContent = currentNote.content
-        currentNoteN.draft = false
-        currentNoteN.title = generateTitle()
-        // const draft = records.find(n => n.id === 'draft_current');
-
-        log('_saved note', currentNoteN)
+        currentNote.draft = false
+        currentNote.title = generateTitle()
+        currentNote.content = _.compact(currentNote.content)
+        currentNote.wordCount = currentNote.content.join(' ').length
+        // log('_saved note', currentNote)
+        // log('_saved note', currentNote.title)
         if (currentNote.id == 'draft_current') currentNote.id = crypto.randomUUID()
         toggleCommandDiv('saveNote')
+        navigateTo.list()
     }
 
     function generateTitle() {
-        let firstPar = currentNoteN.content[0]
+        // console.log('_:::', $state.snapshot(currentNote.content));
+        let firstPar = currentNote.content[0]
+        // log('_firstPar', firstPar)
         if (!firstPar) return 'Новая заметка';
-        const firstLine = firstPar.split('\n')[0];
+        const firstLine = firstPar.text.split('\n')[0];
         const words = firstLine.split(' ');
         if (words.length <= 5) {
             return firstLine.slice(0, 50);
         } else {
             return words.slice(0, 5).join(' ') + '...';
         }
-    }
-
-    function handleEditorInput() {
-        // if (!editDiv) return;
-        isChanged = true
     }
 
     // Очистка
@@ -357,65 +346,67 @@
     async function createOrLoadDraft() {
         const draft = records.find(n => n.id === 'draft_current');
         if (draft) {
-            currentNoteN = draft;
-            log('📝 Загружен draft черновик id:', draft.id);
-            currentPar = currentNoteN.content[currentNoteN.content.length -1] || ''
+            currentNote = draft;
+            // log('📝 Загружен draft черновик id:', draft.id);
+            // currentPar = currentNote.content[currentNote.content.length -1] || ''
+            // currentNote.content = [] // nb nb nb delete
             log('_draft cur par', currentPar)
-            log('_draft currentNoteN', currentNoteN)
-            log('_draft currentNoteN.content', currentNoteN.content)
+            // log('_draft currentNote', currentNote)
+            // log('_draft currentNote.content', currentNote.content)
         } else {
-            currentNoteN = {
+            currentNote = {
                 id: 'draft_current',
                 title: 'Черновик',
-                // content: '', была строка, теперь абзацы
                 content: [],
                 createdAt: new Date(),
                 updatedAt: new Date(),
                 wordCount: 0,
                 draft: true
             };
-            currentPar = ''
-            currentNoteN.content.push(currentPar)
+            currentPar = {text: '', id: 0}
+            currentNote.content.push(currentPar)
             records.push(currentNote);
             console.log('📝 Создан новый черновик');
         }
-        await showNoteParagraphs()
     }
 
     async function showNoteParagraphs() {
         let otmpl = document.querySelector('#par-template');
-        currentNoteN.content.forEach((text, idx)=> {
-            log('_________________ER TEXT', idx, text)
-            if (!text) return
+        currentNote.content.forEach((par, idx)=> {
+            if (!par) return
             let onewpar = otmpl.cloneNode()
             onewpar.id = 'id_' + idx
             onewpar.classList.remove('hidden')
-            onewpar.textContent = text
+            onewpar.textContent = par.text
             oredactor.appendChild(onewpar)
         })
         ocurpar = oredactor.lastElementChild
         if (!ocurpar) {
             ocurpar = await createNewParagraph()
-            log('_______________E ocurpar', ocurpar)
             oredactor.appendChild(ocurpar)
         }
         placeCaretAtEnd(ocurpar);
-        log('_______________ERR', ocurpar)
-        // ccc
     }
 
-    // ccc
     async function createNewParagraph() {
-        currentPar = ''
+        segments = []
+        let size = currentNote.content.length
+        currentPar = {text: '', id: size}
+        currentNote.content.push(currentPar)
+
         let otmpl = document.querySelector('#par-template');
         let onewpar = otmpl.cloneNode()
-        onewpar.id = ''
+        onewpar.id = size
         onewpar.classList.remove('hidden')
-        onewpar.textContent = currentPar
-        oredactor.appendChild(onewpar)
-        currentNoteN.content.push(currentPar)
-        log('_создан новый абзац createNewParagraph')
+        onewpar.textContent = ''
+        ocurpar = onewpar
         return onewpar
+    }
+
+    function showCurrentParagraph(ocurpar) {
+        oredactor.appendChild(ocurpar)
+        placeCaretAtEnd(ocurpar);
+        // log('_создан новый абзац create NewParagraph', ocurpar.id)
     }
 
     function placeCaretAtEnd(el) {
@@ -486,22 +477,13 @@
       {/if}
 
       <!-- Редактор  -->
-      <div id="redactor" class="flex-1 p-4_ overflow-auto border">
+      <div id="redactor" class="flex-1 p-4_ overflow-auto border"
+           oninput={handleEditorInput}
+           onchange={handleEditorInput}
+           >
+
       </div>
       <div id="par-template" class="px-4 pt-2 hidden" contenteditable="true"></div>
-
-      <!-- <div class="flex-1 p-4 overflow-auto border hidden"> -->
-      <!--     <div -->
-      <!--         bind:this={editDiv} -->
-      <!--         oninput={handleEditorInput} -->
-      <!--         onchange={handleEditorInput} -->
-      <!--         contenteditable="true" -->
-      <!--         class="h-full min-h-[280px] text-gray-800 text-base focus:outline-none whitespace-pre-wrap caret-blue-600" -->
-      <!--         placeholder="Говорите - текст будет появляться здесь. Команды: абзац, отменить, сохранить, запись, стоп запись" -->
-      <!--         > -->
-      <!--         {currentNote?.content || ''} -->
-      <!--     </div> -->
-      <!-- </div> -->
 
       <!-- Статус ( + обработка) ???? todo ???-->
       <div class="p-3 border-t border-gray-200 bg-gray-50">-------------------------------
