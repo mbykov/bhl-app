@@ -34,11 +34,15 @@
     let connectionStatus = $state('disconnected');
 
     // Состояния для обработки сегментов
-    let lastProcessedSegment = '' // $state(1);
-    let segments = []
+    let phrases = []
     let temporaryText = $state('');
     let isProcessing = $state(false);
-    let lastCommand = ''
+
+    // Массив всех блоков в редакторе (текст или латекс)
+    let segments = $state([]);
+    // Состояние для промежуточного текста (то, что произносится прямо сейчас)
+    let tempText = $state('');
+
     let commandDiv
 
     let oredactor
@@ -53,6 +57,10 @@
     const unsubscribeNoteId = currentNoteId.subscribe(value => {
       noteId = value;
     });
+
+    // qqq
+    import SvgFlipper from './SvgFlipper.svelte';
+
 
     // Инициализация
     onMount(async () => {
@@ -112,6 +120,22 @@
             break;
         case 'getTime':
             log('_getTime', data)
+            // showLatex(data)
+            data = {
+                text: 'икс равняется синус пи пополам',
+                latex: 'x = \\sin \\left( \\frac{\\pi}{2} \\right)',
+                flipped: false
+            };
+
+            segments.push({
+                id: crypto.randomUUID(),
+                type: 'latex',
+                text: data.text,
+                latex: data.latex,
+                flipped: false
+            });
+
+
             break;
         case 'clearNote': // удали текст
             await clearCurrentNote()
@@ -119,7 +143,7 @@
         case 'addParagraph': // новый абзац, новая строка
             ocurpar.textContent = currentPar.text // killmiddle
             ocurpar = await createNewParagraph()
-            showCurrentParagraph(ocurpar)
+            showNewParagraph(ocurpar)
             break;
         case 'undo':
             undoSegment()
@@ -164,26 +188,45 @@
         if (data.command == 'recordStart') isWriting = true
         if (!isWriting) return;
 
-        if (data.command) {
+        if (data.command === 'latex') {
+            // Очищаем временный текст, так как пришла команда
+            tempText = '';
+            segments.push({
+                id: crypto.randomUUID(),
+                type: 'latex',
+                text: data.text,
+                latex: data.latex,
+                flipped: false
+            });
+        } else if (data.command) {
+            tempText = '';
             // log('__handleCommand_', data)
             handleCommand(data)
         } else if (data.type == 'final') {
-            handleCompletedSegment(data)
+            // Ваша существующая логика для финального текста
+            // Чтобы всё было в одном списке, рекомендую тоже пушить в segments:
+            tempText = '';
+            segments.push({
+                type: 'final',
+                text: data.text
+            });
+            // handleCompletedSegment(data)
         } else if (data.type == 'intermediate') {
             // console.log('⏭ tmp_____:', data);
-            updateEditorWithTemporaryText(data)
+            // updateEditorWithTemporaryText(data)
+            // Обновляем временную строку (реактивно отобразится в конце списка)
+            tempText = data.text;
         }
     }
 
     function undoSegment() {
         ocurpar.textContent = currentPar.text // killmiddle
         log('_отменить::: LAST', currentPar.text)
-        let last = segments.pop()
-        log('_отменить::: LAST', segments)
-        // let relast = new RegExp(lastProcessedSegment + '$')
+        let last = phrases.pop()
+        log('_отменить::: LAST', phrases)
         let relast = new RegExp(last + '$')
         // currentPar.text = currentPar.text.trim().replace(relast, '')
-        currentPar.text = segments.join(' ')
+        currentPar.text = phrases.join(' ')
         ocurpar.textContent = currentPar.text // undo
     }
 
@@ -191,16 +234,15 @@
         isChanged = true
         currentPar.text = ev.target.textContent.trim()
         log('_INPUT currentPar', currentPar.text)
-        // lastProcessedSegment = currentPar.text // todo: тут не ясно - отменяется весь абзац
-        segments = currentPar.text.match(/[^.!?]+[.!?]?/g).map(s => s.trim());
-        log('_INPUT currentPar segments', segments)
+        phrases = currentPar.text.match(/[^.!?]+[.!?]?/g).map(s => s.trim());
+        log('_INPUT currentPar phrases', phrases)
     }
 
     async function clearCurrentNote() {
         currentNote.content = [] // ccc
         oredactor.replaceChildren();
         ocurpar = await createNewParagraph()
-        showCurrentParagraph(ocurpar)
+        showNewParagraph(ocurpar)
     }
 
     /**
@@ -208,16 +250,12 @@
      */
     function handleCompletedSegment(data) {
         data.text = data.text.trim()
-        segments.push(data.text)
-        // let space = currentPar.text ? ' ' : ''
-        // currentPar.text += space + data.text
-        currentPar.text = segments.join(' ')
+        phrases.push(data.text)
+        currentPar.text = phrases.join(' ')
 
         // log('_:::handleCompletedSegment currentPar.text:::', currentPar.text);
         // log('_:::handleCompletedSegment:::', $state.snapshot(currentNote.content));
         ocurpar.textContent = currentPar.text
-        lastProcessedSegment = data.text
-        // log('_:::handleCompletedSegment lastProcessedSegment:::', lastProcessedSegment);
         placeCaretAtEnd(ocurpar)
     }
 
@@ -389,7 +427,7 @@
     }
 
     async function createNewParagraph() {
-        segments = []
+        phrases = []
         let size = currentNote.content.length
         currentPar = {text: '', id: size}
         currentNote.content.push(currentPar)
@@ -403,10 +441,14 @@
         return onewpar
     }
 
-    function showCurrentParagraph(ocurpar) {
+    function showNewParagraph(ocurpar) {
         oredactor.appendChild(ocurpar)
         placeCaretAtEnd(ocurpar);
         // log('_создан новый абзац create NewParagraph', ocurpar.id)
+    }
+
+    async function showLatex(data) {
+        log('_рисуем Латех', data.command)
     }
 
     function placeCaretAtEnd(el) {
@@ -477,13 +519,41 @@
       {/if}
 
       <!-- Редактор  -->
-      <div id="redactor" class="flex-1 p-4_ overflow-auto border"
+      <div id="redactor_" class="hidden flex-1 p-4_ overflow-auto border"
            oninput={handleEditorInput}
            onchange={handleEditorInput}
            >
       </div>
 
       <div id="par-template" class="px-4 pt-2 hidden" contenteditable="true"></div>
+
+      // qqqq
+      <div id="redactor" class="flex-1 p-4 overflow-auto border min-h-[400px]">
+          {#each segments as segment (segment.id || segment.text)}
+            {#if segment.type === 'latex'}
+              <!-- Наш готовый компонент -->
+          <div class="my-4">
+              <SvgFlipper bind:data={segments[segments.indexOf(segment)]} />
+          </div>
+        {:else}
+          <!-- Обычный текстовый блок -->
+          <p
+              class="px-4 pt-2 mb-2 border-b border-transparent hover:border-gray-100"
+              contenteditable="true"
+              oninput={(e) => segment.text = e.target.innerText}
+              >
+              {segment.text}
+          </p>
+        {/if}
+      {/each}
+
+<!-- Временный текст (всегда в конце) -->
+          {#if tempText}
+            <div class="px-4 py-2 text-gray-400 italic transition-all animate-pulse">
+                {tempText}...
+            </div>
+          {/if}
+</div>
 
       <!-- Статус ( + обработка) ???? todo ???-->
       <div class="p-3 border-t border-gray-200 bg-gray-50">-------------------------------
