@@ -9,8 +9,10 @@
     import { icons } from '$lib/images/icons.js';
     import { MicrophoneOutline, CheckOutline } from "flowbite-svelte-icons";
     import { createPersistedArray } from '$lib/stores/persisted-store.svelte.js';
+    import { tick } from 'svelte'
 
     import { svgtest } from '$lib/svg-text.js'
+    import SvgFlipper from './SvgFlipper.svelte';
 
     import Debug from 'debug';
     const dc = Debug('command');
@@ -40,8 +42,12 @@
 
     // Массив всех блоков в редакторе (текст или латекс)
     let segments = $state([]);
+
+    // Основное состояние редактора
+    let paragraphs = $state([]);
     // Состояние для промежуточного текста (то, что произносится прямо сейчас)
     let tempText = $state('');
+    let selectedIndex = $state(-1);
 
     let commandDiv
 
@@ -58,17 +64,15 @@
       noteId = value;
     });
 
-    // qqq
-    import SvgFlipper from './SvgFlipper.svelte';
 
 
     // Инициализация
     onMount(async () => {
         // log('____ON MOUNT')
         oredactor = document.querySelector('#redactor');
-        // ocurpar = oredactor.lastElementChild
-        // здесь плохо. BAD
-        await loadNote();
+
+        // await loadNote();
+        await initNoteState()
         asrClient = new SherpaASRClient();
         asrClient.on('transcript', handleTranscript);
         asrClient.on('status', handleStatusChange);
@@ -84,33 +88,80 @@
     }
 
     // Загрузка заметки
-    // xxx
-    async function loadNote() {
-        // log('______loadNote START noteId', noteId)
-        if (noteId) {
-            const found = records.find(n => n.id === noteId);
-            if (found) {
-                currentNote = found;
-                // currentNote.content = [] // DDD delete
-                // log('_:::loadNote:::', $state.snapshot(currentNote.content));
-                // console.log('📝 Загружена заметка:', found.title);
-            } else {
-                noteId = null;
-                currentNote = null;
-                await createOrLoadDraft();
-                // console.log('📝 LOAD создана новая заметка:', found.title);
-                // непонятно. Если есть noteId, но запись не найдена, то это ошибка должна быть
-            }
-        } else {
-            // $inspect(records)
-            await createOrLoadDraft();
-        }
-        // log('_:::before err:::', $state.snapshot(currentNote));
 
-        currentPar = currentNote.content[currentNote.content.length -1] || ''
-        await showNoteParagraphs()
-        ocurpar = oredactor.lastElementChild
-        placeCaretAtEnd(ocurpar);
+    // Вспомогательная функция для получения текущего текстового параграфа
+    function getOrCreateCurrentParagraph_() {
+    }
+
+    function getTargetParagraph() {
+        // Если индекс не валиден или указывает на латекс, создаем новый параграф
+        if (selectedIndex === -1 || (paragraphs[selectedIndex] && paragraphs[selectedIndex].type !== 'text')) {
+            const newPar = {
+                id: crypto.randomUUID(),
+                type: 'text',
+                phrases: []
+            };
+
+            // Если выбран латекс, вставляем текст сразу после него, иначе в конец
+            const insertAt = selectedIndex === -1 ? paragraphs.length : selectedIndex + 1;
+            paragraphs.splice(insertAt, 0, newPar);
+            selectedIndex = insertAt;
+            return newPar;
+        }
+        return paragraphs[selectedIndex];
+    }
+
+
+    function handleSelectParagraph(index) {
+        selectedIndex = index;
+    }
+
+    // Обработчик транскриптов
+    async function handleTranscript(data) {
+        const now = new Date()
+        let localTime = now.toLocaleString('ru-RU')
+        // console.log('⏭️ START data command_______________________:', localTime, data.text );
+
+        if (data.command == 'recordStart') isWriting = true
+        if (!isWriting) return;
+
+        if (data.command) {
+            tempText = '';
+            handleCommand(data)
+        } else if (data.type == 'final') {
+            tempText = '';
+            // 1. Находим параграф, который БЫЛ активен в момент диктовки
+            // Если параграфов нет, создаем
+            if (selectedIndex === -1) {
+                createNewParagraph();
+            }
+
+            let target = paragraphs[selectedIndex];
+
+            // 2. Если вдруг выбран блок LaTeX, создаем под ним новый текстовый параграф
+            if (target && target.type !== 'text') {
+                createNewParagraph();
+                target = paragraphs[selectedIndex];
+            }
+
+            // 3. Добавляем текст в массив phrases именно этого параграфа
+            if (target && target.type === 'text') {
+                target.phrases.push(data.text.trim());
+
+                // Важно: Svelte 5 иногда нужно "подтолкнуть", если мы мутируем глубокое свойство массива
+                // Хотя в Svelte 5 прокси обычно справляются, для надежности:
+                paragraphs[selectedIndex] = target;
+            }
+
+            // 4. Прокрутка и фокус
+            await tick();
+            focusCurrentParagraph();
+            oredactor.scrollTo({ top: oredactor.scrollHeight, behavior: 'smooth' });
+
+        } else if (data.type == 'intermediate') {
+            // console.log('⏭ tmp_____:', data);
+            tempText = data.text;
+        }
     }
 
     async function handleCommand(data) {
@@ -119,7 +170,7 @@
             await saveNote();
             break;
         case 'getTime':
-            log('_getTime', data)
+            // log('_getTime', data)
             // showLatex(data)
             data = {
                 text: 'икс равняется синус пи пополам',
@@ -127,23 +178,24 @@
                 flipped: false
             };
 
-            segments.push({
+            const newLatex = {
                 id: crypto.randomUUID(),
                 type: 'latex',
                 text: data.text,
                 latex: data.latex,
                 flipped: false
-            });
+            };
 
+            const insertAt = selectedIndex === -1 ? paragraphs.length : selectedIndex + 1;
+            paragraphs.splice(insertAt, 0, newLatex);
+            selectedIndex = insertAt; // Фокус остается на вставленной карточке
 
             break;
         case 'clearNote': // удали текст
             await clearCurrentNote()
             break;
         case 'addParagraph': // новый абзац, новая строка
-            ocurpar.textContent = currentPar.text // killmiddle
             ocurpar = await createNewParagraph()
-            showNewParagraph(ocurpar)
             break;
         case 'undo':
             undoSegment()
@@ -166,7 +218,8 @@
             break;
         }
 
-        placeCaretAtEnd(ocurpar)
+        await tick();
+        focusCurrentParagraph();
         toggleCommandDiv(data.command)
     }
 
@@ -177,46 +230,6 @@
         setTimeout(() => {
             commandDiv.classList.add('hidden');
         }, 3000);
-    }
-
-    // Обработчик транскриптов
-    async function handleTranscript(data) {
-        const now = new Date()
-        let localTime = now.toLocaleString('ru-RU')
-        // console.log('⏭️ START data command_______________________:', localTime, data.text );
-
-        if (data.command == 'recordStart') isWriting = true
-        if (!isWriting) return;
-
-        if (data.command === 'latex') {
-            // Очищаем временный текст, так как пришла команда
-            tempText = '';
-            segments.push({
-                id: crypto.randomUUID(),
-                type: 'latex',
-                text: data.text,
-                latex: data.latex,
-                flipped: false
-            });
-        } else if (data.command) {
-            tempText = '';
-            // log('__handleCommand_', data)
-            handleCommand(data)
-        } else if (data.type == 'final') {
-            // Ваша существующая логика для финального текста
-            // Чтобы всё было в одном списке, рекомендую тоже пушить в segments:
-            tempText = '';
-            segments.push({
-                type: 'final',
-                text: data.text
-            });
-            // handleCompletedSegment(data)
-        } else if (data.type == 'intermediate') {
-            // console.log('⏭ tmp_____:', data);
-            // updateEditorWithTemporaryText(data)
-            // Обновляем временную строку (реактивно отобразится в конце списка)
-            tempText = data.text;
-        }
     }
 
     function undoSegment() {
@@ -230,48 +243,48 @@
         ocurpar.textContent = currentPar.text // undo
     }
 
-    function handleEditorInput(ev) {
-        isChanged = true
-        currentPar.text = ev.target.textContent.trim()
-        log('_INPUT currentPar', currentPar.text)
-        phrases = currentPar.text.match(/[^.!?]+[.!?]?/g).map(s => s.trim());
-        log('_INPUT currentPar phrases', phrases)
-    }
-
-    async function clearCurrentNote() {
-        currentNote.content = [] // ccc
-        oredactor.replaceChildren();
-        ocurpar = await createNewParagraph()
-        showNewParagraph(ocurpar)
-    }
-
-    /**
-     * Обрабатывает завершенный сегмент
-     */
-    function handleCompletedSegment(data) {
-        data.text = data.text.trim()
-        phrases.push(data.text)
-        currentPar.text = phrases.join(' ')
-
-        // log('_:::handleCompletedSegment currentPar.text:::', currentPar.text);
-        // log('_:::handleCompletedSegment:::', $state.snapshot(currentNote.content));
-        ocurpar.textContent = currentPar.text
-        placeCaretAtEnd(ocurpar)
-    }
-
-    function updateEditorWithTemporaryText(data) {
-        if (data.type == 'intermediate') {
-            let space = currentPar.text ? ' ' : '' // начало
-            ocurpar.textContent = currentPar.text + space + data.text
-            oredactor.scrollTop = oredactor.scrollHeight;
-            placeCaretAtEnd(ocurpar)
-        }
-    }
 
     // Обработчики статуса и ошибок
     function handleStatusChange(status) {
         // ++console.log('📡 Статус ASR:', status);
         connectionStatus = status;
+    }
+
+    function handleEditorInput(ev) {
+        // isChanged = true
+        // currentPar.text = ev.target.textContent.trim()
+        // log('_INPUT currentPar', currentPar.text)
+        // phrases = currentPar.text.match(/[^.!?]+[.!?]?/g).map(s => s.trim());
+        // log('_INPUT currentPar phrases', phrases)
+        paragraphs[index].phrases = [ev.target.textContent.replace(tempText, '').trim()];
+    }
+
+    async function clearCurrentNote() {
+        log('__________________CLEAR')
+        // 1. Сбрасываем промежуточный текст
+        tempText = '';
+
+        // 2. Очищаем массив параграфов и создаем первый пустой текстовый блок
+        paragraphs = [
+            {
+                id: crypto.randomUUID(),
+                type: 'text',
+                phrases: []
+            }
+        ];
+
+        // 3. Устанавливаем индекс на первый (и единственный) параграф
+        selectedIndex = 0;
+
+        // 4. Очищаем объект текущей заметки (если нужно сбросить метаданные)
+        currentNote.content = [];
+        currentNote.title = 'Новая заметка';
+
+        // 5. Переводим фокус на новый пустой параграф
+        await focusCurrentParagraph();
+
+        // Опционально: показываем уведомление о выполнении команды
+        toggleCommandDiv('Очищено');
     }
 
     function handleError(err) {
@@ -342,18 +355,20 @@
 
     // Сохранение заметки
     async function saveNote() {
-        if (isChanged) {
-            isChanged = false
-        }
-        currentNote.draft = false
-        currentNote.title = generateTitle()
-        currentNote.content = _.compact(currentNote.content)
-        currentNote.wordCount = currentNote.content.join(' ').length
-        // log('_saved note', currentNote)
-        // log('_saved note', currentNote.title)
-        if (currentNote.id == 'draft_current') currentNote.id = crypto.randomUUID()
-        toggleCommandDiv('saveNote')
-        navigateTo.list()
+        // Собираем текст из параграфов обратно в структуру заметки
+        currentNote.content = paragraphs.map(p => ({
+            type: p.type,
+            text: p.type === 'text' ? p.phrases.join(' ') : (p.latex || '')
+        }));
+
+        if (currentNote.id === 'draft_current') currentNote.id = crypto.randomUUID();
+
+        currentNote.draft = false;
+        currentNote.title = generateTitle();
+        currentNote.updatedAt = new Date();
+
+        toggleCommandDiv('saveNote');
+        navigateTo.list();
     }
 
     function generateTitle() {
@@ -381,64 +396,72 @@
         }
     });
 
-    async function createOrLoadDraft() {
+    async function initNoteState() {
         const draft = records.find(n => n.id === 'draft_current');
         if (draft) {
             currentNote = draft;
-            // log('📝 Загружен draft черновик id:', draft.id);
-            // currentPar = currentNote.content[currentNote.content.length -1] || ''
-            // currentNote.content = [] // nb nb nb delete
-            log('_draft cur par', currentPar)
-            // log('_draft currentNote', currentNote)
-            // log('_draft currentNote.content', currentNote.content)
+            // Переносим данные из объекта заметки в реактивный массив Svelte
+            paragraphs = currentNote.content.map((par, idx) => ({
+                id: crypto.randomUUID(),
+                type: 'text',
+                phrases: par.text ? [par.text] : []
+            }));
         } else {
+            // Инициализируем пустой черновик
             currentNote = {
                 id: 'draft_current',
                 title: 'Черновик',
                 content: [],
                 createdAt: new Date(),
                 updatedAt: new Date(),
-                wordCount: 0,
                 draft: true
             };
-            currentPar = {text: '', id: 0}
-            currentNote.content.push(currentPar)
+            paragraphs = [{ id: crypto.randomUUID(), type: 'text', phrases: [] }];
             records.push(currentNote);
-            console.log('📝 Создан новый черновик');
         }
-    }
+        // Устанавливаем фокус на последний параграф
+        selectedIndex = paragraphs.length - 1;
 
-    async function showNoteParagraphs() {
-        let otmpl = document.querySelector('#par-template');
-        currentNote.content.forEach((par, idx)=> {
-            if (!par) return
-            let onewpar = otmpl.cloneNode()
-            onewpar.id = 'id_' + idx
-            onewpar.classList.remove('hidden')
-            onewpar.textContent = par.text
-            oredactor.appendChild(onewpar)
-        })
-        ocurpar = oredactor.lastElementChild
-        if (!ocurpar) {
-            ocurpar = await createNewParagraph()
-            oredactor.appendChild(ocurpar)
+        if (paragraphs.length === 0) {
+            await createNewParagraph();
+        } else {
+            selectedIndex = paragraphs.length - 1;
+            await focusCurrentParagraph();
         }
-        placeCaretAtEnd(ocurpar);
     }
 
     async function createNewParagraph() {
-        phrases = []
-        let size = currentNote.content.length
-        currentPar = {text: '', id: size}
-        currentNote.content.push(currentPar)
+        const newPar = {
+            id: crypto.randomUUID(),
+            type: 'text',
+            phrases: []
+        };
 
-        let otmpl = document.querySelector('#par-template');
-        let onewpar = otmpl.cloneNode()
-        onewpar.id = size
-        onewpar.classList.remove('hidden')
-        onewpar.textContent = ''
-        ocurpar = onewpar
-        return onewpar
+        paragraphs.push(newPar);
+        selectedIndex = paragraphs.length - 1;
+
+        // Вызываем фокус
+        await focusCurrentParagraph();
+    }
+
+    /**
+     * Вспомогательная функция для перевода фокуса на созданный элемент
+     */
+    async function focusNewParagraph() {
+        // Ждем, пока Svelte обновит DOM (аналог tick)
+        await tick();
+
+        // Находим все текстовые параграфы в нашем redactor
+        const redactor = document.querySelector('#redactor');
+        if (!redactor) return;
+
+        // Находим конкретно тот div, который соответствует нашему selectedIndex
+        const elements = redactor.querySelectorAll('[contenteditable="true"]');
+        const targetEl = elements[selectedIndex];
+
+        if (targetEl) {
+            placeCaretAtEnd(targetEl);
+        }
     }
 
     function showNewParagraph(ocurpar) {
@@ -461,6 +484,29 @@
             var sel = window.getSelection();
             sel.removeAllRanges();
             sel.addRange(range);
+        }
+    }
+
+    async function focusCurrentParagraph() {
+        await tick(); // Ждем, пока Svelte отрисует изменения в DOM
+
+        // Находим все редактируемые параграфы внутри редактора
+        const redactor = document.querySelector('#redactor');
+        if (!redactor) return;
+
+        // Находим элементы именно с contenteditable
+        const editableElements = redactor.querySelectorAll('[contenteditable="true"]');
+
+        const targetWrapper = redactor.children[selectedIndex];
+        if (!targetWrapper) return;
+
+        const targetEl = targetWrapper.querySelector('[contenteditable="true"]');
+
+        if (targetEl) {
+            // Ставим фокус
+            targetEl.focus();
+            // Перемещаем курсор в конец
+            placeCaretAtEnd(targetEl);
         }
     }
 
@@ -506,80 +552,55 @@
         </div>
     </div>
 
-    <!-- Сообщения об ошибках  -->
-    {#if error}
-      <div class="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-        <div class="flex items-start">
-                <svg class="w-5 h-5 text-red-500 mt-0.5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span class="text-red-700 text-sm">{error}</span>
-            </div>
-        </div>
-      {/if}
-
       <!-- Редактор  -->
-      <div id="redactor_" class="hidden flex-1 p-4_ overflow-auto border"
-           oninput={handleEditorInput}
-           onchange={handleEditorInput}
-           >
-      </div>
+      <div id="redactor" class="flex-1 p-4 overflow-auto border min-h-[500px] bg-white shadow-inner">
 
-      <div id="par-template" class="px-4 pt-2 hidden" contenteditable="true"></div>
-
-      // qqqq
-      <div id="redactor" class="flex-1 p-4 overflow-auto border min-h-[400px]">
-          {#each segments as segment (segment.id || segment.text)}
-            {#if segment.type === 'latex'}
-              <!-- Наш готовый компонент -->
-          <div class="my-4">
-              <SvgFlipper bind:data={segments[segments.indexOf(segment)]} />
-          </div>
-        {:else}
-          <!-- Обычный текстовый блок -->
-          <p
-              class="px-4 pt-2 mb-2 border-b border-transparent hover:border-gray-100"
-              contenteditable="true"
-              oninput={(e) => segment.text = e.target.innerText}
+          {#each paragraphs as par, index (par.id)}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <div
+              class="relative mb-2 transition-colors duration-200 rounded-lg group"
+              class:bg-blue-50={selectedIndex === index}
+              onclick={() => handleSelectParagraph(index)}
+              role="button"
+              tabindex="0"
               >
-              {segment.text}
-          </p>
-        {/if}
-      {/each}
+              {#if par.type === 'latex'}
+                  <div class="py-2 px-4">
+                      <SvgFlipper bind:data={paragraphs[index]} />
+                  </div>
+              {:else}
+                  <div
+                      class="px-4 py-3 min-h-[1.5em] outline-none text-lg leading-relaxed"
+                      contenteditable="true"
+                      oninput={(e) => {
+                      // Ручное редактирование: перезаписываем массив фраз одной строкой
+                      par.phrases = [e.currentTarget.innerText.replace(tempText, '').trim()];
+                      }}
+                      >
+                      <!-- Отрисовка накопленных фраз -->
+                      {par.phrases.join(' ')}
 
-<!-- Временный текст (всегда в конце) -->
-          {#if tempText}
-            <div class="px-4 py-2 text-gray-400 italic transition-all animate-pulse">
-                {tempText}...
-            </div>
-          {/if}
-</div>
+                      <!-- Отрисовка tempText внутри этого же блока -->
+                      {#if selectedIndex === index && tempText}
+                          <span class="text-blue-400 opacity-70 italic">
+                              {par.phrases.length > 0 ? ' ' : ''}{tempText}
+                          </span>
+                      {/if}
+                  </div>
+              {/if}
 
-      <!-- Статус ( + обработка) ???? todo ???-->
-      <div class="p-3 border-t border-gray-200 bg-gray-50">-------------------------------
-          <div class="flex items-center justify-between">
-              <div class="text-xs text-gray-500">
-                  {#if isProcessing}
-                    <span class="flex items-center">
-                        <svg class="animate-spin h-3 w-3 mr-2 text-blue-500" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none" />
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        Обработка...
-                    </span>
-                  {:else if temporaryText}
-                    <span>Распознается: "{temporaryText}"</span>
-                  {:else if connectionStatus === 'connected'}
-                    <span>Готов к записи</span>
-                  {:else}
-                    <span>Ожидание подключения...</span>
+              <!-- Визуальный маркер активного параграфа -->
+                  {#if selectedIndex === index}
+                      <div class="absolute left-0 top-2 bottom-2 w-1 bg-blue-500 rounded-full"></div>
                   {/if}
-                </div>
-
-              <div class="text-xs text-gray-500">
-                  {currentNote?.content?.length || 0} знаков
               </div>
-          </div>
+          {/each}
+
+          {#if paragraphs.length === 0 && !tempText}
+              <div class="flex items-center justify-center h-64 text-gray-300 border-2 border-dashed rounded-xl">
+                  Начните говорить...
+              </div>
+          {/if}
       </div>
 
 </div>
@@ -592,6 +613,21 @@
     }
 
     [contenteditable="true"]:focus {
-        outline: none;
+      outline: none;
+    }
+
+    /* Плавное появление новых сегментов */
+    #redactor > div {
+      animation: slideIn 0.2s ease-out;
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-10px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    /* Фокус при редактировании */
+    [contenteditable="true"]:focus {
+      background: rgba(255, 255, 255, 0.8);
     }
 </style>

@@ -6,26 +6,18 @@
     import { MicrophoneOutline } from "flowbite-svelte-icons";
 
     // qqq
-    import SvgFlipper from './SvgFlipper.svelte';
-
-    let svgData = $state({
-        text: 'икс равняется синус пи пополам',
-        latex: 'x = \\sin \\left( \\frac{\\pi}{2} \\right)',
-        flipped: false
-    });
-
-    let isVisible = $state(false);
-
-    function toggleFlipper(item) {
-        item.flipped = !item.flipped;
-    }
-
-    function toggleVisibility() {
-        // В Svelte 5 это вызовет перерисовку {#if}
-        isVisible = !isVisible;
-        console.log("isVisible is now:", isVisible); // Проверьте в консоли
-    }
-
+    // import SvgFlipper from './SvgFlipper.svelte';
+    // let svgData = $state({
+    //     text: 'икс равняется синус пи пополам',
+    //     latex: 'x = \\sin \\left( \\frac{\\pi}{2} \\right)',
+    //     flipped: false
+    // });
+    // let isVisible = $state(false);
+    // function toggleVisibility() {
+    //     // В Svelte 5 это вызовет перерисовку {#if}
+    //     isVisible = !isVisible;
+    //     console.log("isVisible is now:", isVisible); // Проверьте в консоли
+    // }
     // qqq
 
     // Используем persisted array для заметок
@@ -72,7 +64,7 @@
     </div>
 
     <!-- Основной контент -->
-    <div class="hidden h-full overflow-y-auto max-w-4xl mx-auto px-4 py-2 pt-20_"> <!-- pt-20 для отступа под фиксированным заголовком -->
+    <div class="h-full overflow-y-auto max-w-4xl mx-auto px-4 py-2 pt-20_"> <!-- pt-20 для отступа под фиксированным заголовком -->
         {#if notes.length === 0}
           <div class="text-center py-16">
               <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 mb-4">
@@ -118,32 +110,31 @@
         </div>
 
     <!-- qqq -->
+    <!-- <div class="hidden XXX flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden m-8 p-6"> -->
+    <!--     <button -->
+    <!--         onclick={toggleVisibility} -->
+    <!--         class="mb-6 w-fit px-5 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-all active:scale-95 shadow-md" -->
+    <!--         > -->
+    <!--         {isVisible ? 'Скрыть карточку' : 'Показать flipper'} -->
+    <!--     </button> -->
 
-    <div class="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden m-8 p-6">
-        <button
-            onclick={toggleVisibility}
-            class="mb-6 w-fit px-5 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-all active:scale-95 shadow-md"
-            >
-            {isVisible ? 'Скрыть карточку' : 'Показать flipper'}
-        </button>
+    <!--     <div id="redactor" class="flex-1 p-4 border-dashed border-2 border-gray-100 rounded-xl relative"> -->
+    <!--         {#if isVisible} -->
+    <!--             <div class="px-4 pt-2 text-gray-500"> -->
+    <!--                 Контекст задачи: вычислите значение выражения ниже. -->
+    <!--             </div> -->
 
- <div id="redactor" class="flex-1 p-4 border-dashed border-2 border-gray-100 rounded-xl relative">
-        {#if isVisible}
-            <div class="px-4 pt-2 text-gray-500">
-                Контекст задачи: вычислите значение выражения ниже.
-            </div>
+    <!--             <\!-- Передаем данные. Клик по самой карточке будет менять flipped внутри svgData -\-> -->
+    <!--             <SvgFlipper bind:data={svgData} /> -->
 
-            <!-- Передаем данные. Клик по самой карточке будет менять flipped внутри svgData -->
-            <SvgFlipper bind:data={svgData} />
-
-            <div class="px-4 pt-2 text-gray-500">
-                После вычисления проверьте размерность величин.
-            </div>
-        {:else}
-            <div class="text-gray-400 italic">Нажмите кнопку выше, чтобы увидеть задачу</div>
-        {/if}
-      </div>
-    </div>
+    <!--             <div class="px-4 pt-2 text-gray-500"> -->
+    <!--                 После вычисления проверьте размерность величин. -->
+    <!--             </div> -->
+    <!--         {:else} -->
+    <!--             <div class="text-gray-400 italic">Нажмите кнопку выше, чтобы увидеть задачу</div> -->
+    <!--         {/if} -->
+    <!--     </div> -->
+    <!-- </div> -->
 
 </div>
 

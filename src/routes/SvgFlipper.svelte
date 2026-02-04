@@ -1,14 +1,13 @@
 <script>
     import { onMount, tick } from 'svelte';
 
-    // 1. Use $bindable to allow mutation of the 'data' prop
     let { data = $bindable() } = $props();
 
     let container = $state();
     let scriptLoaded = $state(false);
 
-    // We add a specific state for the 3 steps: 0 (SVG), 1 (Text), 2 (LaTeX)
-    let viewState = $state(0);
+    // Вместо viewState используем накопительный угол
+    let currentRotation = $state(0);
 
     onMount(() => {
         if (!window.MathJax) {
@@ -40,7 +39,9 @@
     });
 
     function cycleView() {
-        viewState = (viewState + 1) % 3;
+        // Каждый клик добавляет 120 градусов по оси X
+        // Используем отрицательное значение (-120), чтобы крутилось "от себя"
+        currentRotation -= 120;
     }
 </script>
 
@@ -51,20 +52,21 @@
     role="button"
     tabindex="0"
 >
-    <div class="flipper-inner state-{viewState}">
-        <!-- Side 0: SVG Render -->
-        <div class="side front" bind:this={container}>
+    <!-- Применяем вращение по оси X к внутреннему контейнеру -->
+    <div class="flipper-inner" style="transform: rotateX({currentRotation}deg);">
+        <!-- Сторона 0: SVG (Лицо) -->
+        <div class="side side-0" bind:this={container}>
             ${data.latex}$
         </div>
 
-        <!-- Side 1: Text Description -->
-        <div class="side back">
+        <!-- Сторона 1: Текст (Низ/Зад) -->
+        <div class="side side-1">
             <p class="label">Описание:</p>
-            {data.text}
+            <div class="content">{data.text}</div>
         </div>
 
-        <!-- Side 2: Raw LaTeX Code -->
-        <div class="side raw">
+        <!-- Сторона 2: LaTeX (Верх/Зад) -->
+        <div class="side side-2">
             <p class="label">LaTeX Source:</p>
             <code>{data.latex}</code>
         </div>
@@ -75,22 +77,18 @@
     .flipper-container {
         perspective: 1000px;
         width: 100%;
-        height: 200px;
+        height: 180px; /* Увеличьте, если формулы крупные */
         cursor: pointer;
+        margin: 10px 0;
     }
 
     .flipper-inner {
         position: relative;
         width: 100%;
         height: 100%;
-        transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1);
         transform-style: preserve-3d;
     }
-
-    /* Rotation Logic for 3 sides */
-    .state-0 { transform: rotateY(0deg); }
-    .state-1 { transform: rotateY(-120deg); }
-    .state-2 { transform: rotateY(-240deg); }
 
     .side {
         position: absolute;
@@ -104,14 +102,42 @@
         border-radius: 12px;
         border: 1px solid #e5e7eb;
         background: white;
-        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-        padding: 20px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
+        padding: 15px;
     }
 
-    .front { transform: rotateY(0deg) translateZ(100px); }
-    .back  { transform: rotateY(120deg) translateZ(100px); }
-    .raw   { transform: rotateY(240deg) translateZ(100px); }
+    /* Располагаем стороны в виде треугольной призмы вдоль оси X */
+    /* translateZ определяет "радиус" вращения. 52px подобрано для высоты 180px */
+    .side-0 { transform: rotateX(0deg) translateZ(52px); }
+    .side-1 { transform: rotateX(120deg) translateZ(52px); }
+    .side-2 { transform: rotateX(240deg) translateZ(52px); }
 
-    .label { font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; text-transform: uppercase; }
-    code { background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-family: monospace; }
+    .label {
+        font-size: 0.7rem;
+        color: #9ca3af;
+        margin-bottom: 5px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .content {
+        text-align: center;
+        color: #374151;
+        font-size: 1.1rem;
+    }
+
+    code {
+        background: #f3f4f6;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-family: 'Fira Code', monospace;
+        font-size: 0.9rem;
+        color: #ef4444;
+    }
+
+    /* Исправление для MathJax внутри 3D */
+    :global(.side svg) {
+        max-width: 100%;
+        height: auto !important;
+    }
 </style>
