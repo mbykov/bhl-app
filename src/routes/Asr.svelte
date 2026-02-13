@@ -1,8 +1,7 @@
 <script>
-    import _ from "lodash"
+    // import _ from "lodash"
     import { onMount, onDestroy } from 'svelte';
     import { navigateTo, currentNoteId } from '$lib/store.js';
-    // import { processSegment, executeCommand } from '$lib/command-processor.js';
     import { processSegment } from '$lib/command-processor.js';
     import { SherpaASRClient } from '$lib/asr-client.js';
 
@@ -15,9 +14,9 @@
     import SvgFlipper from './SvgFlipper.svelte';
 
     import Debug from 'debug';
-    const dc = Debug('command');
-    const dapp = Debug('app');
-    const dtr = Debug('transcript');
+    // const dc = Debug('command');
+    // const dapp = Debug('app');
+    // const dtr = Debug('transcript');
 
     import Meter from './Meter.svelte'
     let meterComponent;
@@ -26,7 +25,6 @@
 
     // Текущая заметка
     let currentNote = $state(null);
-    let currentPar = $state({ text: '', id: 0 });
 
     let isRecording = $state(false);
     let isWriting = $state(true);
@@ -36,12 +34,7 @@
     let connectionStatus = $state('disconnected');
 
     // Состояния для обработки сегментов
-    let phrases = []
-    let temporaryText = $state('');
-    let isProcessing = $state(false);
-
-    // Массив всех блоков в редакторе (текст или латекс)
-    let segments = $state([]);
+    // let isProcessing = $state(false);
 
     // Основное состояние редактора
     let paragraphs = $state([]);
@@ -50,7 +43,6 @@
     let selectedIndex = $state(-1);
 
     let commandDiv
-
     let oredactor
 
     // ASR клиент
@@ -63,15 +55,14 @@
       noteId = value;
     });
 
-
-
     // Инициализация
     onMount(async () => {
         // log('____ON MOUNT')
         oredactor = document.querySelector('#redactor');
 
-        // await loadNote();
-        await initNoteState()
+        // await initNoteState()
+        await loadNote()
+
         asrClient = new SherpaASRClient();
         asrClient.on('transcript', handleTranscript);
         asrClient.on('status', handleStatusChange);
@@ -80,35 +71,67 @@
         commandDiv = document.getElementById('commandDiv');
         await startRecording();
     });
-    // ccc
+
+    async function loadNote() {
+        log('______loadNote START noteId', noteId)
+        // $inspect(records)
+        if (noteId) {
+            const found = records.find(n => n.id === noteId);
+            if (found) {
+                currentNote = found;
+                // log('_:::loadNote:::', $state.snapshot(currentNote.paragraphs));
+                console.log('📝 Загружена заметка:', found.title, found.id);
+            }
+        } else {
+            await createOrLoadDraft();
+        }
+        paragraphs = currentNote.paragraphs
+        selectedIndex = paragraphs.length - 1;
+    }
+
+    async function createOrLoadDraft() {
+        const draft = records.find(n => n.id === 'draft_current');
+        if (draft) {
+            currentNote = draft;
+            log('_найден драфт', currentNote)
+        } else {
+            currentNote = {
+                id: 'draft_current',
+                title: 'Черновик',
+                paragraphs: [{ id: crypto.randomUUID(), type: 'text', phrases: [] }],
+                createdAt: new Date(),
+                updatedAt: new Date(),
+                wordCount: 0,
+                draft: true
+            };
+            records.push(currentNote);
+            console.log('📝 Создан новый черновик');
+        }
+    }
 
     async function handleVuMeter(vudata) {
         if (meterComponent) meterComponent.showLeds(vudata)
     }
 
-    // Загрузка заметки
 
     // Вспомогательная функция для получения текущего текстового параграфа
-    function getOrCreateCurrentParagraph_() {
-    }
+    // function getTargetParagraph() {
+    //     // Если индекс не валиден или указывает на латекс, создаем новый параграф
+    //     if (selectedIndex === -1 || (paragraphs[selectedIndex] && paragraphs[selectedIndex].type !== 'text')) {
+    //         const newPar = {
+    //             id: crypto.randomUUID(),
+    //             type: 'text',
+    //             phrases: []
+    //         };
 
-    function getTargetParagraph() {
-        // Если индекс не валиден или указывает на латекс, создаем новый параграф
-        if (selectedIndex === -1 || (paragraphs[selectedIndex] && paragraphs[selectedIndex].type !== 'text')) {
-            const newPar = {
-                id: crypto.randomUUID(),
-                type: 'text',
-                phrases: []
-            };
-
-            // Если выбран латекс, вставляем текст сразу после него, иначе в конец
-            const insertAt = selectedIndex === -1 ? paragraphs.length : selectedIndex + 1;
-            paragraphs.splice(insertAt, 0, newPar);
-            selectedIndex = insertAt;
-            return newPar;
-        }
-        return paragraphs[selectedIndex];
-    }
+    //         // Если выбран латекс, вставляем текст сразу после него, иначе в конец
+    //         const insertAt = selectedIndex === -1 ? paragraphs.length : selectedIndex + 1;
+    //         paragraphs.splice(insertAt, 0, newPar);
+    //         selectedIndex = insertAt;
+    //         return newPar;
+    //     }
+    //     return paragraphs[selectedIndex];
+    // }
 
 
     function handleSelectParagraph(index) {
@@ -196,7 +219,6 @@
             await clearCurrentNote()
             break;
         case 'addParagraph': // новый абзац, новая строка
-            log('_=======addParagraph')
             await createNewParagraph()
             break;
         case 'undoPhrase':
@@ -216,7 +238,7 @@
                 await stopRecording();
             }
             isWriting = false
-            currentNote.title = generateTitle(currentNote.content)
+            currentNote.title = generateTitle()
             navigateTo.list()
             break;
         default:
@@ -228,16 +250,19 @@
         toggleCommandDiv(data.text)
     }
 
-    async function toggleCommandDiv(command) {
-        let cname = document.querySelector('#commandName')
-        cname.textContent = command
+    let commandTimer;
+    function toggleCommandDiv(command) {
+        const cname = document.querySelector('#commandName');
+        cname.textContent = command;
         commandDiv.classList.remove('hidden');
-        setTimeout(() => {
+        if (commandTimer) clearTimeout(commandTimer);
+        commandTimer = setTimeout(() => {
             commandDiv.classList.add('hidden');
         }, 3000);
     }
 
     function undoPhrase() {
+        commitCurrentParagraph();
         let last = paragraphs[selectedIndex].phrases.pop()
     }
 
@@ -252,13 +277,16 @@
         connectionStatus = status;
     }
 
-    function handleEditorInput(ev) {
-        // isChanged = true
-        // currentPar.text = ev.target.textContent.trim()
-        // log('_INPUT currentPar', currentPar.text)
-        // phrases = currentPar.text.match(/[^.!?]+[.!?]?/g).map(s => s.trim());
-        // log('_INPUT currentPar phrases', phrases)
-        paragraphs[index].phrases = [ev.target.textContent.replace(tempText, '').trim()];
+    function handleEditorChange(ev) {
+        // log('_INPUT text', isChanged)
+        if (!isChanged) return
+        isChanged = false
+        let text = ev.target.textContent.trim()
+        // log('_INPUT text', text)
+        const matches = text.match(/[^.!?]+[.!?]?/g);
+        const newphrases = matches ? matches.map(s => s.trim()) : [];
+        // log('_INPUT newphrases', newphrases)
+        paragraphs[selectedIndex].phrases = newphrases
     }
 
     async function clearCurrentNote() {
@@ -266,18 +294,14 @@
 
         // 2. Очищаем массив параграфов и создаем первый пустой текстовый блок
         paragraphs = [
-            {
-                id: crypto.randomUUID(),
-                type: 'text',
-                phrases: []
-            }
+            { id: crypto.randomUUID(), type: 'text', phrases: [] }
         ];
 
         // 3. Устанавливаем индекс на первый (и единственный) параграф
         selectedIndex = 0;
 
         // 4. Очищаем объект текущей заметки (если нужно сбросить метаданные)
-        currentNote.content = [];
+        currentNote.paragraphs = [];
         currentNote.title = 'Новая заметка';
 
         // 5. Переводим фокус на новый пустой параграф
@@ -337,8 +361,7 @@
 
     // Остановка записи
     async function stopRecording() {
-        log('________________stop', currentPar.text)
-        // ocurpar.textContent = currentPar.text // killmiddle
+        log('________________stop rec')
         if (!asrClient || !isRecording) {
             console.log('Запись не активна');
             return;
@@ -355,34 +378,28 @@
 
     // Сохранение заметки
     async function saveNote() {
-        // Собираем текст из параграфов обратно в структуру заметки
-        currentNote.content = paragraphs.map(p => ({
-            type: p.type,
-            text: p.type === 'text' ? p.phrases.join(' ') : (p.latex || '')
-        }));
+        commitCurrentParagraph(); // фиксируем текущие изменения
 
+        currentNote.paragraphs = paragraphs
         if (currentNote.id === 'draft_current') currentNote.id = crypto.randomUUID();
-
         currentNote.draft = false;
         currentNote.title = generateTitle();
         currentNote.updatedAt = new Date();
 
         toggleCommandDiv('saveNote');
+        log('_saved note', currentNote)
         navigateTo.list();
     }
 
+    // console.log('_:::', $state.snapshot(currentNote.paragraphs));
     function generateTitle() {
-        // console.log('_:::', $state.snapshot(currentNote.content));
-        let firstPar = currentNote.content[0]
-        // log('_firstPar', firstPar)
+        let firstPar = paragraphs[0]
         if (!firstPar) return 'Новая заметка';
-        const firstLine = firstPar.text.split('\n')[0];
-        const words = firstLine.split(' ');
-        if (words.length <= 5) {
-            return firstLine.slice(0, 50);
-        } else {
-            return words.slice(0, 5).join(' ') + '...';
-        }
+        const firstPhrase = firstPar.phrases[0]
+        if (!firstPhrase) return 'Новая заметка';
+        let title = firstPhrase.slice(0, 50);
+        // log('_firstPar title', title)
+        return title + '...';
     }
 
     // Очистка
@@ -395,40 +412,6 @@
             asrClient.stop();
         }
     });
-
-    async function initNoteState() {
-        const draft = records.find(n => n.id === 'draft_current');
-        if (draft) {
-            currentNote = draft;
-            // Переносим данные из объекта заметки в реактивный массив Svelte
-            paragraphs = currentNote.content.map((par, idx) => ({
-                id: crypto.randomUUID(),
-                type: 'text',
-                phrases: par.text ? [par.text] : []
-            }));
-        } else {
-            // Инициализируем пустой черновик
-            currentNote = {
-                id: 'draft_current',
-                title: 'Черновик',
-                content: [],
-                createdAt: new Date(),
-                updatedAt: new Date(),
-                draft: true
-            };
-            paragraphs = [{ id: crypto.randomUUID(), type: 'text', phrases: [] }];
-            records.push(currentNote);
-        }
-        // Устанавливаем фокус на последний параграф
-        selectedIndex = paragraphs.length - 1;
-
-        if (paragraphs.length === 0) {
-            await createNewParagraph();
-        } else {
-            selectedIndex = paragraphs.length - 1;
-            await focusCurrentParagraph();
-        }
-    }
 
     async function createNewParagraph() {
         const newPar = {
@@ -446,20 +429,23 @@
      * Вспомогательная функция для перевода фокуса на созданный элемент
      */
     async function focusCurrentParagraph() {
-        await tick(); // Ждем, пока Svelte отрисует изменения в DOM
+        await tick();
+        const targetWrapper = document.querySelector(`[data-paragraph-index="${selectedIndex}"]`);
+        if (!targetWrapper) return;
+        const targetEl = targetWrapper.querySelector('[contenteditable="true"]');
+        if (targetEl) placeCaretAtEnd(targetEl);
+    }
 
+    async function focusCurrentParagraph_() {
+        await tick(); // Ждем, пока Svelte отрисует изменения в DOM
         // Находим все редактируемые параграфы внутри редактора
         const redactor = document.querySelector('#redactor');
         if (!redactor) return;
-
         // Находим элементы именно с contenteditable
         const editableElements = redactor.querySelectorAll('[contenteditable="true"]');
-
         const targetWrapper = redactor.children[selectedIndex];
         if (!targetWrapper) return;
-
         const targetEl = targetWrapper.querySelector('[contenteditable="true"]');
-
         if (targetEl) {
             placeCaretAtEnd(targetEl);
         }
@@ -475,6 +461,24 @@
             var sel = window.getSelection();
             sel.removeAllRanges();
             sel.addRange(range);
+        }
+    }
+
+
+    function commitCurrentParagraph() {
+        if (!isChanged) return;
+        const active = document.activeElement;
+        if (active && active.isContentEditable) {
+            const wrapper = active.closest('[data-paragraph-index]');
+            if (wrapper) {
+                const index = parseInt(wrapper.dataset.paragraphIndex);
+                if (!isNaN(index) && paragraphs[index] && paragraphs[index].type === 'text') {
+                    const text = active.textContent.trim();
+                    const newphrases = text.match(/[^.!?]+[.!?]?/g)?.map(s => s.trim()) || [];
+                    paragraphs[index].phrases = newphrases;
+                    isChanged = false;
+                }
+            }
         }
     }
 
@@ -526,6 +530,7 @@
           {#each paragraphs as par, index (par.id)}
               <!-- svelte-ignore a11y_click_events_have_key_events -->
           <div
+              data-paragraph-index={index}
               class="relative mb-2 transition-colors duration-200 rounded-lg group"
               class:bg-blue-50={selectedIndex === index}
               onclick={() => handleSelectParagraph(index)}
@@ -540,11 +545,12 @@
                   <div
                       class="px-4 py-3 min-h-[1.5em] outline-none text-lg leading-relaxed"
                       contenteditable="true"
-                      oninput={(e) => {
-                      // Ручное редактирование: перезаписываем массив фраз одной строкой
-                      par.phrases = [e.currentTarget.innerText.replace(tempText, '').trim()];
+                      onblur={(ev) => {
+                        handleEditorChange(ev)
                       }}
+                      oninput={(ev) => { isChanged = true }}
                       >
+
                       <!-- Отрисовка накопленных фраз -->
                       {par.phrases.join(' ')}
 
