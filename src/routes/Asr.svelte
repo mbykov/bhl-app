@@ -52,7 +52,6 @@
     let commandDiv
 
     let oredactor
-    let ocurpar
 
     // ASR клиент
     let asrClient = $state(null);
@@ -120,12 +119,12 @@
     async function handleTranscript(data) {
         const now = new Date()
         let localTime = now.toLocaleString('ru-RU')
-        // console.log('⏭️ START data command_______________________:', localTime, data.text );
+        // console.log('⏭️ START data command_______________________:', localTime, data );
 
-        if (data.command == 'recordStart') isWriting = true
+        if (data.text == 'recordStart') isWriting = true
         if (!isWriting) return;
 
-        if (data.command) {
+        if (data.type == 'command') {
             tempText = '';
             handleCommand(data)
         } else if (data.type == 'final') {
@@ -156,16 +155,17 @@
             // 4. Прокрутка и фокус
             await tick();
             focusCurrentParagraph();
-            oredactor.scrollTo({ top: oredactor.scrollHeight, behavior: 'smooth' });
 
         } else if (data.type == 'intermediate') {
             // console.log('⏭ tmp_____:', data);
             tempText = data.text;
         }
+        oredactor.scrollTo({ top: oredactor.scrollHeight, behavior: 'smooth' });
     }
 
     async function handleCommand(data) {
-        switch (data.command) {
+        // log('_handleCommand data', data)
+        switch (data.text) {
         case 'saveNote':
             await saveNote();
             break;
@@ -190,22 +190,25 @@
             paragraphs.splice(insertAt, 0, newLatex);
             selectedIndex = insertAt; // Фокус остается на вставленной карточке
 
+            oredactor.scrollTo({ top: oredactor.scrollHeight, behavior: 'smooth' });
             break;
-        case 'clearNote': // удали текст
+        case 'clearText': // удали текст
             await clearCurrentNote()
             break;
         case 'addParagraph': // новый абзац, новая строка
-            ocurpar = await createNewParagraph()
+            log('_=======addParagraph')
+            await createNewParagraph()
             break;
-        case 'undo':
-            undoSegment()
+        case 'undoPhrase':
+            undoPhrase()
             break;
+        case 'killParagraph':
+            killParagraph()
         case 'recordStart': // начать запись
-            ocurpar.textContent = currentPar.text // killmiddle
+            log('___recordStart')
             isWriting = true
             break;
         case 'recordStop': // стоп запись
-            ocurpar.textContent = currentPar.text // killmiddle
             isWriting = false
             break;
         case 'recordNew': // стоп запись + goto List + title
@@ -216,11 +219,13 @@
             currentNote.title = generateTitle(currentNote.content)
             navigateTo.list()
             break;
+        default:
+            log('_DEFAULT', data.text)
         }
 
         await tick();
         focusCurrentParagraph();
-        toggleCommandDiv(data.command)
+        toggleCommandDiv(data.text)
     }
 
     async function toggleCommandDiv(command) {
@@ -232,17 +237,14 @@
         }, 3000);
     }
 
-    function undoSegment() {
-        ocurpar.textContent = currentPar.text // killmiddle
-        log('_отменить::: LAST', currentPar.text)
-        let last = phrases.pop()
-        log('_отменить::: LAST', phrases)
-        let relast = new RegExp(last + '$')
-        // currentPar.text = currentPar.text.trim().replace(relast, '')
-        currentPar.text = phrases.join(' ')
-        ocurpar.textContent = currentPar.text // undo
+    function undoPhrase() {
+        let last = paragraphs[selectedIndex].phrases.pop()
     }
 
+    function killParagraph() {
+        paragraphs.pop()
+        selectedIndex = paragraphs.length - 1;
+    }
 
     // Обработчики статуса и ошибок
     function handleStatusChange(status) {
@@ -260,8 +262,6 @@
     }
 
     async function clearCurrentNote() {
-        log('__________________CLEAR')
-        // 1. Сбрасываем промежуточный текст
         tempText = '';
 
         // 2. Очищаем массив параграфов и создаем первый пустой текстовый блок
@@ -338,7 +338,7 @@
     // Остановка записи
     async function stopRecording() {
         log('________________stop', currentPar.text)
-        ocurpar.textContent = currentPar.text // killmiddle
+        // ocurpar.textContent = currentPar.text // killmiddle
         if (!asrClient || !isRecording) {
             console.log('Запись не активна');
             return;
@@ -439,54 +439,12 @@
 
         paragraphs.push(newPar);
         selectedIndex = paragraphs.length - 1;
-
-        // Вызываем фокус
         await focusCurrentParagraph();
     }
 
     /**
      * Вспомогательная функция для перевода фокуса на созданный элемент
      */
-    async function focusNewParagraph() {
-        // Ждем, пока Svelte обновит DOM (аналог tick)
-        await tick();
-
-        // Находим все текстовые параграфы в нашем redactor
-        const redactor = document.querySelector('#redactor');
-        if (!redactor) return;
-
-        // Находим конкретно тот div, который соответствует нашему selectedIndex
-        const elements = redactor.querySelectorAll('[contenteditable="true"]');
-        const targetEl = elements[selectedIndex];
-
-        if (targetEl) {
-            placeCaretAtEnd(targetEl);
-        }
-    }
-
-    function showNewParagraph(ocurpar) {
-        oredactor.appendChild(ocurpar)
-        placeCaretAtEnd(ocurpar);
-        // log('_создан новый абзац create NewParagraph', ocurpar.id)
-    }
-
-    async function showLatex(data) {
-        log('_рисуем Латех', data.command)
-    }
-
-    function placeCaretAtEnd(el) {
-        el.focus();
-        if (typeof window.getSelection != "undefined"
-            && typeof document.createRange != "undefined") {
-            var range = document.createRange();
-            range.selectNodeContents(el);
-            range.collapse(false);
-            var sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-        }
-    }
-
     async function focusCurrentParagraph() {
         await tick(); // Ждем, пока Svelte отрисует изменения в DOM
 
@@ -503,10 +461,20 @@
         const targetEl = targetWrapper.querySelector('[contenteditable="true"]');
 
         if (targetEl) {
-            // Ставим фокус
-            targetEl.focus();
-            // Перемещаем курсор в конец
             placeCaretAtEnd(targetEl);
+        }
+    }
+
+    function placeCaretAtEnd(el) {
+        el.focus();
+        if (typeof window.getSelection != "undefined"
+            && typeof document.createRange != "undefined") {
+            var range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false);
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
         }
     }
 
