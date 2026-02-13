@@ -5,21 +5,6 @@
     import { icons } from '$lib/images/icons.js';
     import { MicrophoneOutline } from "flowbite-svelte-icons";
 
-    // qqq
-    // import SvgFlipper from './SvgFlipper.svelte';
-    // let svgData = $state({
-    //     text: 'икс равняется синус пи пополам',
-    //     latex: 'x = \\sin \\left( \\frac{\\pi}{2} \\right)',
-    //     flipped: false
-    // });
-    // let isVisible = $state(false);
-    // function toggleVisibility() {
-    //     // В Svelte 5 это вызовет перерисовку {#if}
-    //     isVisible = !isVisible;
-    //     console.log("isVisible is now:", isVisible); // Проверьте в консоли
-    // }
-    // qqq
-
     // Используем persisted array для заметок
     let records = createPersistedArray('voice-notes', []);
 
@@ -83,58 +68,60 @@
         {:else}
           <div class="space-y-3">
               {#each notes as note (note.id)}
-                <div
-                    onclick={() => navigateTo.asr(note.id)}
-                    class="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm transition-shadow cursor-pointer group"
-                    >
-                    <div class="flex justify-between items-start">
-                        <div class="flex-1 min-w-0">
-                            <h3 class="text-base font-medium text-gray-900 truncate mb-1"> {note.title} </h3>
-                            <p class="text-sm text-gray-500 mb-2">
-                                {formatDate(note.createdAt)} • {note.wordCount} слов
-                            </p>
 
-                        </div>
-                        <button
-                            onclick={(e) => deleteNote(note, e)}
-                            class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50 transition-all ml-2 flex-shrink-0"
-                            title="Удалить"
-    >
-                            {@html icons.delete}
-                        </button>
-                    </div>
-                </div>
+    <!--           <div -->
+    <!--                 onclick={() => navigateTo.asr(note.id)} -->
+    <!--                 class="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm transition-shadow cursor-pointer group" -->
+    <!--                 > -->
+    <!--                 <div class="flex flex-wrap justify-between items-start"> -->
+    <!--                     <div class="flex-1 min-w-0"> -->
+    <!--                         <h3 class="text-base font-medium text-gray-900 truncate mb-1"> {note.title} </h3> -->
+    <!--                         <p class="text-sm text-gray-500 mb-2"> -->
+    <!--                             {formatDate(note.createdAt)} • {note.wordCount} слов -->
+    <!--                         </p> -->
+
+    <!--                     </div> -->
+    <!--                     <button -->
+    <!--                         onclick={(e) => deleteNote(note, e)} -->
+    <!--                         class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50 transition-all ml-2 flex-shrink-0" -->
+    <!--                         title="Удалить" -->
+    <!-- > -->
+    <!--                         {@html icons.delete} -->
+
+    <!--                     </button> -->
+    <!--                 </div> -->
+    <!--             </div> -->
+
+              <div
+                  onclick={() => navigateTo.asr(note.id)}
+                  class="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm transition-shadow cursor-pointer group relative"
+                  >
+                  <!-- Отступ справа, чтобы текст не заходил под кнопку -->
+                  <div class="pr-8">
+                      <h3 class="text-base font-medium text-gray-900 truncate mb-1">{note.title}</h3>
+                      <p class="text-sm text-gray-500 mb-2">
+                          {formatDate(note.createdAt)} • {note.wordCount} слов
+                      </p>
+                  </div>
+
+                  <!-- Кнопка удаления с абсолютным позиционированием -->
+                  <button
+                      onclick={(e) => deleteNote(note, e)}
+                      class="absolute right-2 top-1/2 -translate-y-1/2
+                      text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50
+                      transition-all
+                      opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                      title="Удалить"
+                      >
+                      {@html icons.delete}
+                  </button>
+
+              </div>
+
               {/each}
             </div>
           {/if}
         </div>
-
-    <!-- qqq -->
-    <!-- <div class="hidden XXX flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden m-8 p-6"> -->
-    <!--     <button -->
-    <!--         onclick={toggleVisibility} -->
-    <!--         class="mb-6 w-fit px-5 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-all active:scale-95 shadow-md" -->
-    <!--         > -->
-    <!--         {isVisible ? 'Скрыть карточку' : 'Показать flipper'} -->
-    <!--     </button> -->
-
-    <!--     <div id="redactor" class="flex-1 p-4 border-dashed border-2 border-gray-100 rounded-xl relative"> -->
-    <!--         {#if isVisible} -->
-    <!--             <div class="px-4 pt-2 text-gray-500"> -->
-    <!--                 Контекст задачи: вычислите значение выражения ниже. -->
-    <!--             </div> -->
-
-    <!--             <\!-- Передаем данные. Клик по самой карточке будет менять flipped внутри svgData -\-> -->
-    <!--             <SvgFlipper bind:data={svgData} /> -->
-
-    <!--             <div class="px-4 pt-2 text-gray-500"> -->
-    <!--                 После вычисления проверьте размерность величин. -->
-    <!--             </div> -->
-    <!--         {:else} -->
-    <!--             <div class="text-gray-400 italic">Нажмите кнопку выше, чтобы увидеть задачу</div> -->
-    <!--         {/if} -->
-    <!--     </div> -->
-    <!-- </div> -->
 
 </div>
 

@@ -55,14 +55,10 @@
       noteId = value;
     });
 
-    // Инициализация
     onMount(async () => {
-        // log('____ON MOUNT')
         oredactor = document.querySelector('#redactor');
 
-        // await initNoteState()
         await loadNote()
-
         asrClient = new SherpaASRClient();
         asrClient.on('transcript', handleTranscript);
         asrClient.on('status', handleStatusChange);
@@ -113,32 +109,10 @@
         if (meterComponent) meterComponent.showLeds(vudata)
     }
 
-
-    // Вспомогательная функция для получения текущего текстового параграфа
-    // function getTargetParagraph() {
-    //     // Если индекс не валиден или указывает на латекс, создаем новый параграф
-    //     if (selectedIndex === -1 || (paragraphs[selectedIndex] && paragraphs[selectedIndex].type !== 'text')) {
-    //         const newPar = {
-    //             id: crypto.randomUUID(),
-    //             type: 'text',
-    //             phrases: []
-    //         };
-
-    //         // Если выбран латекс, вставляем текст сразу после него, иначе в конец
-    //         const insertAt = selectedIndex === -1 ? paragraphs.length : selectedIndex + 1;
-    //         paragraphs.splice(insertAt, 0, newPar);
-    //         selectedIndex = insertAt;
-    //         return newPar;
-    //     }
-    //     return paragraphs[selectedIndex];
-    // }
-
-
     function handleSelectParagraph(index) {
         selectedIndex = index;
     }
 
-    // Обработчик транскриптов
     async function handleTranscript(data) {
         const now = new Date()
         let localTime = now.toLocaleString('ru-RU')
@@ -180,21 +154,18 @@
             focusCurrentParagraph();
 
         } else if (data.type == 'intermediate') {
-            // console.log('⏭ tmp_____:', data);
             tempText = data.text;
         }
         oredactor.scrollTo({ top: oredactor.scrollHeight, behavior: 'smooth' });
     }
 
     async function handleCommand(data) {
-        // log('_handleCommand data', data)
         switch (data.text) {
         case 'saveNote':
             await saveNote();
             break;
         case 'getTime':
             // log('_getTime', data)
-            // showLatex(data)
             data = {
                 text: 'икс равняется синус пи пополам',
                 latex: 'x = \\sin \\left( \\frac{\\pi}{2} \\right)',
@@ -273,19 +244,15 @@
 
     // Обработчики статуса и ошибок
     function handleStatusChange(status) {
-        // ++console.log('📡 Статус ASR:', status);
         connectionStatus = status;
     }
 
     function handleEditorChange(ev) {
-        // log('_INPUT text', isChanged)
         if (!isChanged) return
         isChanged = false
         let text = ev.target.textContent.trim()
-        // log('_INPUT text', text)
         const matches = text.match(/[^.!?]+[.!?]?/g);
         const newphrases = matches ? matches.map(s => s.trim()) : [];
-        // log('_INPUT newphrases', newphrases)
         paragraphs[selectedIndex].phrases = newphrases
     }
 
@@ -327,13 +294,11 @@
 
     async function toggleWriting() {
         isWriting = !isWriting
-        // if (!isWriting) isConnecting = true
     }
 
 
     // Начало записи
     async function startRecording() {
-        // ++console.log('_____________________________START')
         if (!asrClient) {
             error = 'ASR клиент не инициализирован';
             return;
@@ -350,7 +315,6 @@
             isRecording = true;
             isConnecting = false;
             isWriting = true;
-            // console.log('✅ Запись начата');
         } catch (err) {
             console.error('Ошибка запуска записи:', err);
             error = err.message || 'Не удалось начать запись';
@@ -369,7 +333,6 @@
         try {
             await asrClient.stop();
             isRecording = false;
-            // console.log('⏹️ Запись остановлена');
         } catch (err) {
             console.error('Ошибка остановки записи:', err);
             error = err.message || 'Не удалось остановить запись';
@@ -398,7 +361,6 @@
         const firstPhrase = firstPar.phrases[0]
         if (!firstPhrase) return 'Новая заметка';
         let title = firstPhrase.slice(0, 50);
-        // log('_firstPar title', title)
         return title + '...';
     }
 
