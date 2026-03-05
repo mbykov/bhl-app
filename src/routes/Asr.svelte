@@ -69,7 +69,7 @@
     });
 
     async function loadNote() {
-        log('______loadNote START noteId', noteId)
+        // log('______loadNote START noteId', noteId)
         // $inspect(records)
         if (noteId) {
             const found = records.find(n => n.id === noteId);
@@ -89,7 +89,7 @@
         const draft = records.find(n => n.id === 'draft_current');
         if (draft) {
             currentNote = draft;
-            log('_найден драфт', currentNote)
+            // log('_найден драфт', currentNote)
         } else {
             currentNote = {
                 id: 'draft_current',
@@ -116,7 +116,7 @@
     async function handleTranscript(data) {
         const now = new Date()
         let localTime = now.toLocaleString('ru-RU')
-        // console.log('⏭️ START data command_______________________:', localTime, data );
+        console.log('⏭️ START handleTranscript_______________________:', localTime, data );
 
         if (data.text == 'recordStart') isWriting = true
         if (!isWriting) return;
@@ -144,6 +144,7 @@
             if (target && target.type === 'text') {
                 target.phrases.push(data.text.trim());
 
+                log('_final data.text', data.text)
                 // Важно: Svelte 5 иногда нужно "подтолкнуть", если мы мутируем глубокое свойство массива
                 // Хотя в Svelte 5 прокси обычно справляются, для надежности:
                 paragraphs[selectedIndex] = target;
@@ -153,14 +154,15 @@
             await tick();
             focusCurrentParagraph();
 
-        } else if (data.type == 'intermediate') {
+        } else if (data.type == 'interim') {
             tempText = data.text;
         }
         oredactor.scrollTo({ top: oredactor.scrollHeight, behavior: 'smooth' });
     }
 
     async function handleCommand(data) {
-        switch (data.text) {
+        log('_handleCommand data.text', data.name)
+        switch (data.name) {
         case 'saveNote':
             await saveNote();
             break;
@@ -273,6 +275,8 @@
 
         // 5. Переводим фокус на новый пустой параграф
         await focusCurrentParagraph();
+
+        // log('____CLEAR paragraphs', paragraphs)
 
         // Опционально: показываем уведомление о выполнении команды
         toggleCommandDiv('Очищено');
