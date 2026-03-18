@@ -124,7 +124,7 @@
         if (data.type == 'command') {
             tempText = '';
             handleCommand(data)
-        } else if (data.type == 'final') {
+        } else if (data.type == 'correct') {
             tempText = '';
             // 1. Находим параграф, который БЫЛ активен в момент диктовки
             // Если параграфов нет, создаем
@@ -145,6 +145,7 @@
                 target.phrases.push(data.text.trim());
 
                 log('_final data.text', data.text)
+                log('_final selectedIndex', selectedIndex)
                 // Важно: Svelte 5 иногда нужно "подтолкнуть", если мы мутируем глубокое свойство массива
                 // Хотя в Svelte 5 прокси обычно справляются, для надежности:
                 paragraphs[selectedIndex] = target;
